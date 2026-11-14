@@ -49,6 +49,9 @@ def embed_sparkle(app: str, sign_id: str | None) -> None:
     shutil.rmtree(dest, ignore_errors=True)
     subprocess.run(["ditto", os.path.join(sparkle_dir(), "Sparkle.framework"), dest], check=True)
     shutil.rmtree(os.path.join(dest, "Versions", "B", "XPCServices"), ignore_errors=True)   # for sandboxed apps
+    link = os.path.join(dest, "XPCServices")
+    if os.path.islink(link):
+        os.remove(link)   # it pointed at what was just removed
     sign = ["codesign", "--force", "--sign", sign_id or "-"]
     if sign_id:
         sign += ["--options", "runtime", "--timestamp"]

@@ -137,8 +137,9 @@ Studio's login Keychain: "Private key for signing Sparkle updates", service
 `jTFOt+znz5fHM/9/JsRJfm5aaz7S3XDQ+st0AMWacYk=` (in `build_app_support.py` and
 `updates.py`). **Lose the private key and no installed copy will accept another update.**
 `tools/appcast.py` has Sparkle's `generate_keys` export it into a private temporary folder
-for `sign_update`, then overwrites and removes it. Back it up the same way, into a password
-manager, never the repo:
+for `sign_update`, then overwrites and removes it. **Backed up** (2026-11-14) in Matthew's
+1Password as the secure note "Magpie (rpl-maker) Sparkle signing key (EdDSA)", checked to
+match exactly. To export it again, never into the repo:
 
     "$(.venv/bin/python -c 'import build_app_support as b; print(b.sparkle_bin())')/generate_keys" --account rpl-maker -x KEYFILE
 
@@ -229,12 +230,23 @@ searched (`inventory.SEARCH_ROOTS`), and how NVDA reads the check list.
 6. **A windowed Windows build may start with no stdout**: `app.py` reopens it, or the
    self-test prints nowhere.
 7. **Never `ditto` over an existing app bundle**: it merges, leaving the old build's files
-   inside. Move the old copy to the Trash first. On 2026-11-14 a merged copy at
-   /Applications/Magpie.app hung at `_dyld_start` when launched from a terminal, and after
-   that **a clean copy at that exact path hung the same way**, while the identical app ran
-   from dist, the scratchpad, and /Applications under another name. Gatekeeper accepts it
-   (Notarized Developer ID); nothing showed in the log or on screen. Something macOS keeps
-   per path; a restart or opening it once from the Finder should clear it. Not resolved.
+   inside. Move the old copy to the Trash first.
+
+   **On the Studio, a never-run copy at exactly /Applications/Magpie.app hangs on its first
+   run** (2026-11-14, investigated, not an app bug). The process sits at `_dyld_start`:
+   only the program file and dyld mapped, 32 KB, no Python, no settings or lock file open,
+   so none of the app's code has run (moving checking.lock away changed nothing). Tested:
+   the same never-run copy runs from dist, the scratchpad, or /Applications under any
+   other name; a copy that has run once anywhere runs fine when moved to that path; a
+   never-run copy written there or moved there hangs, with or without unregistering the
+   path from LaunchServices (its provenance tag can't be removed). Gatekeeper accepts it
+   as notarized; no prompt on screen, nothing in the log, no third-party security software.
+   So it's macOS state for that one path on that Mac, most likely from the earlier copy at
+   that path, never seen elsewhere. **Installing there: run the copy's self-test somewhere
+   else first, then move it in** (that's how 0.1.0 is installed, and its self-test passes
+   from /Applications). Watch the first Sparkle update on the Studio: Sparkle moves a
+   never-run copy into place, which is the case that hangs. A restart may clear it;
+   untested.
 8. **Sound candidates** (`tools/make_sound_candidates.py`, none wired in): level by loudness
    and cap the peak before MP3, then check the encoded file. Levelled to a -1.5 dBFS peak,
    the bright ones came out at 0.0 after encoding.
