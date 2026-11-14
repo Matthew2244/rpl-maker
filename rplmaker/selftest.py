@@ -41,7 +41,7 @@ def main() -> int:
             except Exception as e:  # noqa: BLE001
                 problems.append(f"Prism (screen reader speech) didn't load: {e}")
     n = len(inventory.plugins())
-    print(f"REAPER's plug-in list: {n} VST3 plug-ins" if n else "REAPER's plug-in list: not found (fine on a Mac without REAPER)")
+    print(f"REAPER's plug-in list: {n} VST3 plug-ins" if n else "REAPER's plug-in list: not found (fine on a computer without REAPER)")
     print("Self-test: " + ("OK" if not problems else "FAILED: " + "; ".join(problems)))
     return 0 if not problems else 1
 

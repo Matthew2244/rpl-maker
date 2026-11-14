@@ -71,6 +71,14 @@ def main(argv=None) -> int:
             print(f"No installed plug-in matches {want!r}.")
             return 2
         chosen += [p for p in hit if p not in chosen]
+    for p in [p for p in chosen if not p.count]:
+        print(f"No preset files this can read were found for {p.name}, so it's skipped.")
+    chosen = [p for p in chosen if p.count]
+    if not chosen:
+        return 2
+    if portable.status() == "missing":
+        print("REAPER isn't installed on this computer, so there's nothing to check presets with.")
+        return 2
     if portable.status() != "ready":
         print("Making the checking copy of REAPER first.")
         portable.make(progress=print)
@@ -89,7 +97,15 @@ def main(argv=None) -> int:
             print("  " + a[0].sentence(), flush=True)
     bld = pipeline.Builder(os.path.expanduser(args.out), author=args.by, min_keep=args.min,
                            check_twice=not args.once, split_over=args.split, events=events)
-    results = bld.build(chosen)
+    try:
+        results = bld.build(chosen)
+    except portable.CheckerError as e:
+        print(e)
+        return 2
+    except KeyboardInterrupt:
+        bld.abort()
+        print("Stopped.")
+        return 130
     path = pipeline.write_report(results, os.path.expanduser(args.out))
     print("Report:", path)
     return 0
