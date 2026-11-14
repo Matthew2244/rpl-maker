@@ -46,12 +46,17 @@ def main():
     p.add_argument("--issuer", default="4eeb658c-79f1-4dc6-bb6f-54db15d61ce8")
     p.add_argument("--keychain-service", default="asc-api-key")
     p.add_argument("--no-upload", action="store_true")
+    p.add_argument("--windows-only", action="store_true",
+                   help="only the Windows update list, once CI has attached the installer (no rebuild)")
     a = p.parse_args()
     if a.tag.lstrip("v") != VERSION:
         sys.exit(f"The tag says {a.tag} but the app says {VERSION}.")
+    os.chdir(ROOT)
+    if a.windows_only:
+        windows_list(a)
+        return
     ident = developer_id()
     print("Signing as:", ident)
-    os.chdir(ROOT)
     # .venv-release: python-build-standalone 3.13 (macOS 11+), not Homebrew's (macOS 26 only)
     py = os.path.join(ROOT, ".venv-release", "bin", "python")
     run([py if os.path.exists(py) else sys.executable, "build_app.py"], env=dict(os.environ, RPLMAKER_SIGN_ID=ident))
@@ -96,24 +101,31 @@ def main():
     with open(cast, "w") as f:
         run([sys.executable, os.path.join("tools", "appcast.py"), out, VERSION, f"{base}/{os.path.basename(out)}"]
             + notes, stdout=f)
-    uploads = [out, cast]
+    if not a.no_upload:
+        run(["gh", "release", "upload", a.tag, "-R", REPO, out, cast, "--clobber"])
+    windows_list(a)
+
+
+def windows_list(a):
+    """appcast-windows.xml for the installer CI attached to the release, signed and uploaded."""
+    base = f"https://github.com/{REPO}/releases/download/{a.tag}"
+    notes = ["--notes", a.notes] if a.notes else []
     setup = os.path.join("dist", f"{APP_NAME}-Setup.exe")
     if os.path.exists(setup):
         os.remove(setup)
     got = subprocess.run(["gh", "release", "download", a.tag, "-R", REPO, "-p", f"{APP_NAME}-Setup.exe", "-D", "dist"],
                          capture_output=True, text=True)
-    if got.returncode == 0 and os.path.exists(setup):
-        wcast = os.path.join("dist", "appcast-windows.xml")
-        with open(wcast, "w") as f:
-            run([sys.executable, os.path.join("tools", "appcast.py"), setup, VERSION, f"{base}/{APP_NAME}-Setup.exe",
-                 "--windows"] + notes, stdout=f)
-        uploads.append(wcast)
-    else:
-        print("The Windows installer isn't on the release yet (CI still building?), so no Windows update list. "
-              "Run this again once it is.")
+    if got.returncode != 0 or not os.path.exists(setup):
+        print("The Windows installer isn't on the release yet (CI still building?). When it is, run: "
+              f"tools/release_mac.py {a.tag} --windows-only" + (f" --notes {a.notes}" if a.notes else ""))
+        return
+    wcast = os.path.join("dist", "appcast-windows.xml")
+    with open(wcast, "w") as f:
+        run([sys.executable, os.path.join("tools", "appcast.py"), setup, VERSION, f"{base}/{APP_NAME}-Setup.exe",
+             "--windows"] + notes, stdout=f)
     if not a.no_upload:
-        run(["gh", "release", "upload", a.tag, "-R", REPO, *uploads, "--clobber"])
-    print("Done:", ", ".join(os.path.basename(u) for u in uploads) + (" built." if a.no_upload else f" on {a.tag}."))
+        run(["gh", "release", "upload", a.tag, "-R", REPO, wcast, "--clobber"])
+    print("Done: appcast-windows.xml" + (" built." if a.no_upload else f" on {a.tag}."))
 
 
 if __name__ == "__main__":

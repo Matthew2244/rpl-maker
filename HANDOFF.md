@@ -155,9 +155,14 @@ silicon only for now (the standalone build is arm64).
 A release: bump `VERSION`, push, `gh release create vX.Y.Z --notes-file NOTES.md` (CI builds
 the Windows installer from the tag, installs it quietly, runs the installed self-test,
 uninstalls, and attaches `Magpie-Setup.exe`), then on the Studio
-`.venv/bin/python tools/release_mac.py vX.Y.Z --notes NOTES.md`: Developer ID with the
-hardened runtime, notarize, staple, Gatekeeper, the signed app's self-test, both update
-lists, upload. Run it again if the installer wasn't attached yet.
+`.venv/bin/python tools/release_mac.py vX.Y.Z --notes release-notes/X.Y.Z.md`: Developer ID
+with the hardened runtime, notarize, staple, Gatekeeper, the signed app's self-test, the Mac
+zip and appcast.xml uploaded, then appcast-windows.xml if CI has attached the installer. If it
+hadn't yet: `tools/release_mac.py vX.Y.Z --windows-only --notes ...` once it has (no rebuild).
+
+**Released:** v0.1.0, 2026-11-14. Checked from outside afterwards: both `latest/download`
+update lists resolve, both downloads match their EdDSA signatures and lengths against the
+app's public key, and the downloaded Mac app passes Gatekeeper as Notarized Developer ID.
 
 Windows has no code signing certificate, so SmartScreen may warn; the README says what to do.
 Updates are still protected: WinSparkle checks the EdDSA signature first.
@@ -223,7 +228,14 @@ searched (`inventory.SEARCH_ROOTS`), and how NVDA reads the check list.
    path.
 6. **A windowed Windows build may start with no stdout**: `app.py` reopens it, or the
    self-test prints nowhere.
-7. **Sound candidates** (`tools/make_sound_candidates.py`, none wired in): level by loudness
+7. **Never `ditto` over an existing app bundle**: it merges, leaving the old build's files
+   inside. Move the old copy to the Trash first. On 2026-11-14 a merged copy at
+   /Applications/Magpie.app hung at `_dyld_start` when launched from a terminal, and after
+   that **a clean copy at that exact path hung the same way**, while the identical app ran
+   from dist, the scratchpad, and /Applications under another name. Gatekeeper accepts it
+   (Notarized Developer ID); nothing showed in the log or on screen. Something macOS keeps
+   per path; a restart or opening it once from the Finder should clear it. Not resolved.
+8. **Sound candidates** (`tools/make_sound_candidates.py`, none wired in): level by loudness
    and cap the peak before MP3, then check the encoded file. Levelled to a -1.5 dBFS peak,
    the bright ones came out at 0.0 after encoding.
 
