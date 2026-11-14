@@ -20,6 +20,7 @@ SIGN_ID = os.environ.get("RPLMAKER_SIGN_ID")
 WIN = sys.platform == "win32"
 args = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--name", APP_NAME,
         "--add-data", os.path.join("rplmaker", "worker.lua") + os.pathsep + "rplmaker",
+        "--add-data", os.path.join("assets", "sounds") + os.pathsep + os.path.join("assets", "sounds"),
         "--hidden-import", "rplmaker.gui", "--hidden-import", "rplmaker.cli", "--hidden-import", "rplmaker.selftest"]
 icon = os.path.join("assets", "icon.ico" if WIN else "icon.icns")
 if os.path.exists(icon):

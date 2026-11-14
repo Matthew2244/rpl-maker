@@ -117,6 +117,25 @@ asks first.
 path, size and modification time; new files read on 8 threads, only the first 64 KB of an
 NKS file. A cold scan of about 91,000 files took 7 s on an M-series Mac, a cached one 1.8 s.
 
+## Sounds (Matthew's picks, 2026-11-14)
+
+Picked by ear from the audition reels: **done** = synth pluck take 1, **failed** = synth pluck
+take 1, **library made** = synth pluck take 2, **waiting for you** = marimba take 2. Made with
+ElevenLabs sound generation on Matthew's account (his own, so fine in this public repo).
+`tools/finish_sounds.py` remakes `assets/sounds/<event>.mp3` (Mac, afplay) and `.wav`
+(Windows, 16-bit with dither, winsound) from the masters, in float, levelled as auditioned,
+and fails if any finished file peaks over -1 dBFS (they sit at -3.2 to -3.3, no clipping;
+checked identical to the candidates he heard).
+
+When: library made (a library written), failed (a plug-in failed or wasn't made, or the run
+couldn't go on), done (a run finished; nothing when stopped), waiting (checking is waiting on
+macOS's folder question, once a run). **Sounds and speech take turns** (`MainFrame.cue`): a
+queue where each item plays its sound, says its sentence when the sound has ended, then
+waits about 0.28 s a word before the next sound, so a sound never lands on speech or speech
+on a sound (checked off-screen with sounds recorded, never played). `sounds.play` also never
+overlaps two sounds and plays library made at most every 2 s. Settings, Play sounds turns
+them off; then sentences come at once. Stop clears what's still queued.
+
 ## Updates
 
 Sparkle 2.10.0 on the Mac (in Contents/Frameworks, without its XPC services, signed inside
@@ -247,13 +266,13 @@ searched (`inventory.SEARCH_ROOTS`), and how NVDA reads the check list.
    from /Applications). Watch the first Sparkle update on the Studio: Sparkle moves a
    never-run copy into place, which is the case that hangs. A restart may clear it;
    untested.
-8. **Sound candidates** (`tools/make_sound_candidates.py`, none wired in): level by loudness
+8. **Sound candidates** (`tools/make_sound_candidates.py`): level by loudness
    and cap the peak before MP3, then check the encoded file. Levelled to a -1.5 dBFS peak,
    the bright ones came out at 0.0 after encoding.
 
 ## Not done
 
-- The name; sounds (candidates exist, none chosen); an Intel Mac build; Windows code signing.
+- The name; an Intel Mac build; Windows code signing. The sounds haven't been heard on Windows.
 - Testing on Windows with a screen reader and a real REAPER (see Tested).
 - Allow Folder Access with someone answering; whether it should run by itself on first use.
 - The packaged Mac app's own scan reads Documents and other drives, so macOS will ask about

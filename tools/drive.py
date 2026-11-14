@@ -23,6 +23,11 @@ from rplmaker import gui, inventory, speech  # noqa: E402
 said = []
 gui.say = lambda t, polite=True: said.append(("polite" if polite else "URGENT", t))
 gui.settings.save = lambda cfg: None          # never touch the real settings from a test
+import time as _t  # noqa: E402
+from rplmaker import sounds as _sounds  # noqa: E402
+_sounds._start = lambda p: said.append(("SOUND", os.path.basename(p) + f" at {_t.monotonic():.2f}"))   # recorded, never played
+_said_raw = gui.say
+gui.say = lambda t, polite=True: said.append(("polite" if polite else "URGENT", t + f" at {_t.monotonic():.2f}"))
 
 
 def ax_label(ctrl):
@@ -121,6 +126,7 @@ if wanted:
         print(f"\n(pressing Stop after {stop_at:.0f} s; status was: {f.status.GetLabel()})")
         f.on_stop()
     pump(3600, lambda: f.busy is None)
+    pump(12)   # sounds and speech queue one at a time: let the last ones happen
     print("\nSpoken during the run:")
     for kind, t in said:
         print(f"  [{kind}] {t}")

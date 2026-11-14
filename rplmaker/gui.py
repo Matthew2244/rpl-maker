@@ -16,7 +16,7 @@ import time
 
 import wx
 
-from . import APP_NAME, VERSION, formats, inventory, pipeline, portable, settings, speech, updates
+from . import APP_NAME, VERSION, formats, inventory, pipeline, portable, settings, sounds, speech, updates
 
 CMD = "Command" if sys.platform == "darwin" else "Control"
 
@@ -107,6 +107,8 @@ class MainFrame(wx.Frame):
         self.last_report = None
         self.builder = None
         self.scanned_once = False
+        self.cues = []            # (sound, sentence, polite), one at a time: see cue()
+        self.cue_busy = False
 
         panel = wx.Panel(self)
         s = wx.BoxSizer(wx.VERTICAL)
@@ -206,6 +208,32 @@ class MainFrame(wx.Frame):
         self.Centre()
         wx.CallAfter(self.scan)
         wx.CallAfter(self._start_updates)
+
+    # -- sounds and speech, one at a time --------------------------------------------------
+    SECONDS_PER_WORD = 0.28   # about VoiceOver's default rate; a faster voice just leaves a gap
+
+    def cue(self, event: str | None, text: str | None, polite: bool = True) -> None:
+        """Queue a sound and the sentence that goes with it. Each plays its sound, says its
+        sentence when the sound has ended, and the next waits until that sentence has had
+        time to be spoken: sounds never land on speech, speech never lands on sounds."""
+        self.cues.append((event, text, polite))
+        if not self.cue_busy:
+            self._next_cue()
+
+    def _next_cue(self):
+        if not self or not self.cues:
+            self.cue_busy = False
+            return
+        self.cue_busy = True
+        event, text, polite = self.cues.pop(0)
+        wait = sounds.play(event, enabled=bool(self.cfg.get("sounds", True))) if event else 0.0
+        talk = (len(text.split()) * self.SECONDS_PER_WORD + 0.3) if text else 0.0
+        if text:
+            if wait > 0:
+                wx.CallLater(int(wait * 1000) + 120, say, text, polite)
+            else:
+                say(text, polite)
+        wx.CallLater(int((wait + talk) * 1000) + 150, self._next_cue)
 
     # -- updates: heard, never popped up --------------------------------------------------
     def _start_updates(self):
@@ -510,7 +538,7 @@ class MainFrame(wx.Frame):
                 p, words = a
                 if not told_waiting[0]:      # once a run: the same advice twice is noise
                     told_waiting[0] = True
-                    wx.CallAfter(say, words, False)
+                    wx.CallAfter(self.cue, "waiting", words, False)
                 wx.CallAfter(self.set_progress, f"{p.name}: waiting. " + words, None)
             elif kind == "result":
                 r = a[0]
@@ -550,8 +578,11 @@ class MainFrame(wx.Frame):
                 if p.class_id in self.checked:
                     self.list.Check(i)
         self.show_details()
-        if speak and self.cfg.get("speak", True):
-            say(r.sentence(), polite=r.status == "made")
+        if speak:
+            event = {"made": "library_made", "failed": "failed", "dropped": "failed"}.get(r.status)
+            text = r.sentence() if self.cfg.get("speak", True) else None
+            if event or text:
+                self.cue(event, text, polite=r.status == "made")
 
     def build_done(self, results, report, err):
         if not self:   # the window was closed while work finished in the background
@@ -576,7 +607,13 @@ class MainFrame(wx.Frame):
             words = f"Done. {tally}. Open Report has the details."
         self.set_progress(words, 1)
         self._enable()
-        say(words, polite=False)
+        if err:
+            self.cue("failed", words, polite=False)
+        elif self.stop_flag:
+            self.cues.clear()     # Stop means stop: drop what was still waiting to be said
+            say(words, polite=False)
+        else:
+            self.cue("done", words, polite=False)
 
     def on_access(self):
         if self.busy:
@@ -716,6 +753,12 @@ class SettingsDialog(wx.Dialog):
                                    "in several folders.")
         s.Add(self.split_over, 0, wx.LEFT | wx.RIGHT, 8)
 
+        self.sounds = wx.CheckBox(self, label="Play sounds")
+        self.sounds.SetValue(bool(cfg.get("sounds", True)))
+        self.sounds.SetToolTip("A sound when a library is made, when one can't be made, when a run is done, and "
+                               "when checking is waiting on you. What's said comes after the sound, never over it.")
+        s.Add(self.sounds, 0, wx.ALL, 8)
+
         self.speak = wx.CheckBox(self, label="Say each plug-in's result as it finishes")
         self.speak.SetValue(bool(cfg.get("speak", True)))
         self.speak.SetToolTip("VoiceOver says each library's result when it's done, without moving you. "
@@ -773,7 +816,7 @@ class SettingsDialog(wx.Dialog):
         return {"out_dir": self.out.GetValue(), "author": self.author.GetValue().strip(),
                 "min_keep": self.min.GetValue(), "check_twice": self.twice.GetValue(),
                 "split_big": self.split.GetValue(), "split_over": self.split_over.GetValue(),
-                "speak": self.speak.GetValue(), "extra_folders": list(self.folders.GetItems())}
+                "speak": self.speak.GetValue(), "sounds": self.sounds.GetValue(), "extra_folders": list(self.folders.GetItems())}
 
 
 ACCESS_WORDS = ("Some plug-ins look through your Documents folder or other drives as they load. The first time "

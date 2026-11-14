@@ -36,6 +36,7 @@ DEFAULTS = {
     "split_over": 300,
     "extra_folders": [],
     "speak": True,
+    "sounds": True,
 }
 
 

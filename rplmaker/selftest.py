@@ -40,6 +40,9 @@ def main() -> int:
                 speech.load_prism()
             except Exception as e:  # noqa: BLE001
                 problems.append(f"Prism (screen reader speech) didn't load: {e}")
+    from . import sounds
+    if sounds.missing():
+        problems.append("sounds missing: " + ", ".join(sounds.missing()))
     n = len(inventory.plugins())
     print(f"REAPER's plug-in list: {n} VST3 plug-ins" if n else "REAPER's plug-in list: not found (fine on a computer without REAPER)")
     print("Self-test: " + ("OK" if not problems else "FAILED: " + "; ".join(problems)))

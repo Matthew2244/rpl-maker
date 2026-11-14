@@ -196,3 +196,38 @@ class Variants(unittest.TestCase):
         self.assertEqual(inventory.split_display("Unfiltered Audio G8 (Plugin Alliance) (4ch)"),
                          ("Unfiltered Audio G8", "Plugin Alliance"))
         self.assertEqual(inventory.split_display("Plain"), ("Plain", ""))
+
+
+class Sounds(unittest.TestCase):
+    """Nothing is played: _start is replaced by a recorder."""
+    def setUp(self):
+        from rplmaker import sounds
+        self.s = sounds
+        self.played = []
+        self._orig = sounds._start
+        sounds._start = lambda p: self.played.append(os.path.basename(p))
+        sounds._state.update(busy_until=0.0, last={})
+
+    def tearDown(self):
+        self.s._start = self._orig
+
+    def test_files_exist_for_this_system(self):
+        self.assertEqual(self.s.missing(), [])
+
+    def test_speech_waits_for_the_sound(self):
+        wait = self.s.play("failed")
+        self.assertAlmostEqual(wait, self.s.LENGTH["failed"], places=2)
+
+    def test_second_sound_queues_after_the_first(self):
+        self.s.play("library_made")
+        wait = self.s.play("done")
+        self.assertAlmostEqual(wait, self.s.LENGTH["library_made"] + self.s.GAP + self.s.LENGTH["done"], places=1)
+
+    def test_library_made_at_most_every_two_seconds(self):
+        self.s.play("library_made")
+        self.s.play("library_made")
+        self.assertEqual(len(self.played), 1)
+
+    def test_off_means_silent_and_no_wait(self):
+        self.assertEqual(self.s.play("done", enabled=False), 0.0)
+        self.assertEqual(self.played, [])

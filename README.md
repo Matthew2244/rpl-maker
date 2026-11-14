@@ -24,7 +24,8 @@ Your own REAPER, its settings and its presets are never changed. The separate co
 two files from your REAPER: its licence and its list of plug-ins.
 
 It was made with screen readers in mind first. Every control has a name and a help tag,
-results are spoken as they finish, and everything works from the keyboard. It works with
+results are spoken as they finish, each with its own short sound that never plays over the
+speech, and everything works from the keyboard. It works with
 VoiceOver on the Mac, and with NVDA, JAWS and Narrator on Windows.
 
 ## Getting it
