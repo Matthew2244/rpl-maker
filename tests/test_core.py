@@ -143,7 +143,10 @@ class Naming(unittest.TestCase):
 
     def test_documents_folder_is_real(self):
         # on Windows it's asked of the system (OneDrive often moves it)
-        self.assertTrue(os.path.isdir(inventory.documents()) or not os.path.isdir(inventory.HOME))
+        if sys.platform == "win32":
+            self.assertTrue(os.path.isdir(inventory.documents()))
+        else:
+            self.assertEqual(inventory.documents(), os.path.join(inventory.HOME, "Documents"))
 
     def test_grouped_reasons(self):
         cut = [("A", "same"), ("B", "same"), ("C", "other")]

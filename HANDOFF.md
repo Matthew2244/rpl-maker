@@ -187,6 +187,8 @@ Last, it runs `tools/verify_release.py`: both `latest/download` update lists nam
 version and this tag's files, each download matches its length and EdDSA signature against
 the app's public key (openssl), and the downloaded Mac app passes codesign and Gatekeeper as
 Notarized Developer ID.
+It waits up to 3 minutes for `latest/download` to show the new version: right after an
+upload GitHub served 0.1.2's list for a while, and the 0.1.3 check failed on that alone.
 
 **Never check a release by hand in a temporary folder and leave it.** The 0.1.0 check did
 (`$TMPDIR/tmp_se0gq4i/Magpie.app`), and on 2026-11-15 macOS showed "Magpie.app is damaged":

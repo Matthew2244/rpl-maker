@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -67,11 +68,17 @@ def check_signature(path: str, sig_b64: str, tmp: str) -> bool:
 
 def check_list(name: str, tag: str, tmp: str, problems: list) -> str | None:
     """One update list: version, link, length, signature. Returns the downloaded file."""
-    try:
-        xml = fetch(LATEST + name).decode("utf-8", "replace")
-    except Exception as e:  # noqa: BLE001
-        problems.append(f"{name}: couldn't be read ({e})")
-        return None
+    # GitHub can serve the previous release's list for a minute or two after an upload
+    for attempt in range(12):
+        try:
+            xml = fetch(LATEST + name).decode("utf-8", "replace")
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"{name}: couldn't be read ({e})")
+            return None
+        if f"<sparkle:shortVersionString>{tag.lstrip('v')}<" in xml:
+            break
+        print(f"{name}: not showing {tag} yet, looking again in 15 seconds")
+        time.sleep(15)
     v = re.search(r"<sparkle:shortVersionString>([^<]+)<", xml)
     enc = re.search(r'<enclosure url="([^"]+)" sparkle:edSignature="([^"]+)" length="(\d+)"', xml)
     if not v or v.group(1) != tag.lstrip("v"):
