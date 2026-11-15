@@ -24,12 +24,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from rplmaker import portable  # noqa: E402
 
 AUDIO_WORDS = ("audio", "device")
+WATCHED: dict = {}   # (class, title) -> what a dialog said, from every watch
 
 
 def watch(pid_of, seconds: float):
     """Sample the copy's windows until `seconds` pass. Returns (every window seen, by
     (class, title)), the longest run of samples one window stayed visible)."""
-    seen, runs, longest = {}, {}, {}
+    seen, runs, longest, said = {}, {}, {}, {}
     t0 = time.time()
     while time.time() - t0 < seconds:
         pid = pid_of()
@@ -37,6 +38,8 @@ def watch(pid_of, seconds: float):
             now = set()
             for hwnd, cls, title, visible in portable.win_windows(pid):
                 seen[(cls, title)] = seen.get((cls, title), False) or visible
+                if cls == "#32770" and (cls, title) not in said:
+                    said[(cls, title)] = portable.win_text(hwnd)
                 if visible:
                     now.add(hwnd)
                     runs[hwnd] = runs.get(hwnd, 0) + 1
@@ -45,6 +48,7 @@ def watch(pid_of, seconds: float):
                 if h not in now:
                     runs[h] = 0
         time.sleep(0.05)
+    WATCHED.update(said)
     return seen, longest
 
 
@@ -100,10 +104,13 @@ def describe(seen, longest):
     for (cls, title), was_visible in sorted(seen.items()):
         n = longest.get((cls, title), 0)
         print(f"    {cls!r} {title!r}: " + (f"visible for {n} samples (~{n * 50} ms)" if was_visible else "never visible"))
+        if (cls, title) in WATCHED:
+            print(f"      it said: {WATCHED[(cls, title)][:300]!r}")
 
 
 def asks_about_audio(seen) -> list[str]:
-    return [t for (cls, t) in seen if cls == "#32770" and any(w in t.lower() for w in AUDIO_WORDS)]
+    return [t for (cls, t) in seen if cls == "#32770"
+            and any(w in (t + " " + WATCHED.get((cls, t), "")).lower() for w in AUDIO_WORDS)]
 
 
 def main() -> int:
@@ -130,18 +137,17 @@ def main() -> int:
         now = asks_about_audio(seen)
         if now:
             problems.append(f"it still asked about audio: {now}")
-        lingered = [t for (c, t), n in longest.items() if n >= 4]
+        lingered = [t for (c, t), n in longest.items() if n >= 3]
         if lingered:
-            problems.append(f"windows stayed visible over 150 ms: {lingered}")
+            problems.append(f"windows stayed visible 150 ms or more: {lingered}")
         if left:
             problems.append("the copy was still running after stop")
-        if not before:
-            print("  note: the old way didn't ask either on this machine, so this run can't show the fix "
-                  "by contrast; it still shows nothing is asked or shown now.")
     finally:
         shutil.rmtree(work, ignore_errors=True)
     for p in problems:
         print("PROBLEM:", p)
+    if not problems and not before:
+        problems.append("the old way didn't ask about audio here, so this check can't tell the question apart")
     print("No audio question, nothing shown, nothing left running." if not problems else "FAILED")
     return 1 if problems else 0
 

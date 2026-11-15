@@ -408,22 +408,51 @@ def win_windows(pid: int) -> list[tuple[int, str, str, bool]]:
         return []
 
 
-def _win_hide(pid: int) -> list[str]:
+def win_text(hwnd: int) -> str:
+    """What a window says: its title and the text of the controls inside it (a dialog's
+    question and its buttons), one line. Never raises."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        parts = []
+
+        def text_of(h):
+            buf = ctypes.create_unicode_buffer(1024)
+            user32.GetWindowTextW(h, buf, 1024)
+            return buf.value.strip()
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def each(h, _lparam):
+            t = text_of(h)
+            if t:
+                parts.append(t)
+            return True
+        user32.EnumChildWindows(hwnd, each, 0)
+        return " | ".join([text_of(hwnd)] + parts)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _win_hide(pid: int, own: set | None = None) -> list[str]:
     """Hide the checking copy's own windows, so it's out of the taskbar and Alt-Tab the way
     the Mac's copy is out of the Dock and Command-Tab (no one should land in it thinking it's
-    their REAPER). Called over and over while the copy starts, and once more when it's ready;
-    a plug-in's own window (an activation) appears later and stays visible. Returns the
-    titles of question windows (dialogs) that were hidden, so a copy that never gets ready
-    can say what it was asking. Never raises."""
+    their REAPER). Called every 20 ms while the copy starts; each window seen then is added to
+    `own`, which is kept hidden for the rest of the session (`Session._keep_hidden`). A
+    plug-in's own window (an activation) appears later, is never in `own`, and stays visible.
+    Returns what each question window (dialog) that was hidden says, so a copy that never
+    gets ready can say what it was asking. Never raises."""
     asked = []
     try:
         import ctypes
         user32 = ctypes.windll.user32
         for hwnd, cls, title, visible in win_windows(pid):
+            if own is not None:
+                own.add(hwnd)
             if visible:
                 user32.ShowWindow(hwnd, 0)   # SW_HIDE
-                if cls == "#32770":         # a dialog: REAPER asking something
-                    asked.append(title or "untitled")
+                if cls == "#32770" and not title.startswith("Scanning"):   # REAPER asking something
+                    asked.append(win_text(hwnd) or title or "untitled")
     except Exception:  # noqa: BLE001
         pass
     return asked
@@ -443,6 +472,23 @@ class Session:
         self.n = 0
         self.log = log or (lambda s: None)
         self.closed = False   # set by close(): never start the copy again
+        self.own_windows: set = set()   # Windows: the copy's own windows, kept hidden
+        self.hiding = None
+
+    def _keep_hidden(self, pid: int) -> None:
+        """Windows: REAPER can show a window it made while starting after the script that
+        says it's ready has run (its main window, its About box). Those, and only those, are
+        hidden again whenever they show, until the copy ends. Never raises."""
+        import ctypes
+        user32 = ctypes.windll.user32
+        while self.pid == pid and not self.closed:
+            for hwnd in list(self.own_windows):
+                try:
+                    if user32.IsWindowVisible(hwnd):
+                        user32.ShowWindow(hwnd, 0)   # SW_HIDE
+                except Exception:  # noqa: BLE001
+                    pass
+            time.sleep(0.02)
 
     # -- start and stop -------------------------------------------------------------------
     def _find_pid(self):
@@ -467,6 +513,7 @@ class Session:
             # left over from a run that ended badly (the app quit or crashed): end it.
             _kill(left)
             time.sleep(0.5)
+        self.own_windows = set()
         os.makedirs(self.jobs, exist_ok=True)
         for f in os.listdir(self.jobs):
             os.remove(os.path.join(self.jobs, f))
@@ -503,23 +550,26 @@ class Session:
             if os.path.exists(ready):
                 self.pid = self._find_pid()
                 if WIN and self.pid:
-                    _win_hide(self.pid)
+                    _win_hide(self.pid, self.own_windows)
+                    import threading
+                    self.hiding = threading.Thread(target=self._keep_hidden, args=(self.pid,), daemon=True)
+                    self.hiding.start()
                 self.log(f"checking REAPER ready after {time.time() - t0:.0f}s, pid {self.pid}")
                 return
             if WIN:   # out of sight from the start, a question window included
-                for title in _win_hide(proc.pid):
-                    if title not in asked:
-                        asked.append(title)
-                        self.log(f"checking REAPER asked something while starting: {title}")
-            time.sleep(0.1 if WIN else 0.3)
+                for what in _win_hide(proc.pid, self.own_windows):
+                    if what not in asked:
+                        asked.append(what)
+                        self.log(f"checking REAPER asked something while starting: {what}")
+            time.sleep(0.02 if WIN else 0.3)
         self.stop()   # never left running when it didn't get ready (Windows: by its pid file)
         if not os.path.exists(os.path.join(self.dir, "reaper-license.rk")):
             raise CheckerError("The checking copy of REAPER didn't start. REAPER has no licence on this computer, "
                                "so the copy stops at REAPER's evaluation window, and this needs a licensed REAPER.")
         if asked:
             raise CheckerError("The checking copy of REAPER didn't start: it stopped to ask something, in a "
-                               f"window called {', '.join(asked)}. It has been closed. Please report this, "
-                               "with that name, so the copy can be set up to answer it.")
+                               f"window saying: {'; '.join(asked)}. It has been closed. Please report this, "
+                               "with what it said, so the copy can be set up to answer it.")
         raise CheckerError("The checking copy of REAPER didn't start within 90 seconds. A window may be "
                            f"waiting in it (a question from {'Windows' if WIN else 'macOS'} or REAPER); it has "
                            "been closed.")
