@@ -44,6 +44,8 @@ updating. Names offered: Magpie, Preset Hound, Squirrel, Trove, Hoardling.
 | `compare.py` | did the plug-in take the preset? decoders and the per-preset verdict |
 | `pipeline.py` | the whole job per plug-in, no window; splitting; the report |
 | `gui.py` | the window; `speech.py` VoiceOver and Prism; `updates.py` Sparkle and WinSparkle |
+| `keys.py` | every menu shortcut, wx-free, so a test checks each key means one thing |
+| `inreaper.py` | which plug-ins already have their presets in REAPER's presets folder (read only) |
 | `cli.py`, `settings.py`, `selftest.py` | command line; one JSON settings file; `--self-test` |
 
 **Matching a file to a plug-in**, best evidence first: the VST3 class id inside the file
@@ -103,7 +105,7 @@ others left out naming it); and on the second check each must save back the same
 the first time, unless the plug-in doesn't even do that for its own defaults. The report
 says how each preset was checked.
 
-Then each finished library is checked again (Settings, on by default) and anything failing
+Then each finished library is checked again (Preferences, on by default) and anything failing
 the second time is cut. Fewer working presets than the minimum (5 by default) and no file is
 written. Each library starts "0 Default settings".
 
@@ -116,6 +118,22 @@ folder), one level deeper when the first gives fewer than three (Addictive Drums
 wrappers above 38 ADpaks). Folders under the minimum go together into "Other folders". Only
 the first library carries "0 Default settings". Before a run of over 5,000 presets the window
 asks first.
+
+**Already in REAPER** (`inreaper.py`, 0.1.6). REAPER keeps each plug-in's own presets in
+`<resource>/presets/`: `vst3-<bundle file name>.ini` (REAPER's plug-in list writes that name
+with `_` for spaces and dashes, so it's compared by `norm`; some files are named after the
+plug-in instead, so that counts too), `vst-<file>.ini` (matched through the VST2 entries in the
+same plug-in list, by unique id or name), `au-<Maker>: <Name>.ini`, `clap-<id>.ini` (through
+`reaper-clap-*.ini`). `-builtin.ini` is REAPER's cache of factory names and `js-` is JSFX: both
+skipped. Matthew's point (2026-11-15): nearly every plug-in gets a file as soon as it's used,
+often one Default or blank entry, so the rule is names: at least half the distinct names found
+here and at least 3, never counting Default, Init, Untitled, Program N, Preset N or blank
+(`placeholder`). A saved name also matches by what follows any " - " or "/", since libraries
+made here name folder presets "Folder - Sub - Name". On the Studio (2026-11-15) it flags none:
+the 85 user files are UADx (which Magpie finds no presets for), REAPER's own ReaPlugs, and Surge
+XT's single "default", correctly not counted. A done plug-in is unchecked after every scan
+unless checked by hand knowing it (`checked_anyway` in settings), and Check All Shown skips it.
+Only `inventory.REAPER_RESOURCE` is read, like the plug-in list: a portable REAPER isn't.
 
 **The scan cache** (`scan-cache.json` in the support folder): each file's reading kept by
 path, size and modification time; new files read on 8 threads, only the first 64 KB of an
@@ -137,7 +155,7 @@ macOS's folder question, once a run). **Sounds and speech take turns** (`MainFra
 queue where each item plays its sound, says its sentence when the sound has ended, then
 waits about 0.28 s a word before the next sound, so a sound never lands on speech or speech
 on a sound (checked off-screen with sounds recorded, never played). `sounds.play` also never
-overlaps two sounds and plays library made at most every 2 s. Settings, Play sounds turns
+overlaps two sounds and plays library made at most every 2 s. Preferences, Play sounds turns
 them off; then sentences come at once. Stop clears what's still queued.
 
 ## Updates
@@ -202,7 +220,9 @@ your REAPER's plug-in folders, Windows-safe file names; `release-notes/0.1.2.md`
 OneDrive often moves it; `release-notes/0.1.3.md`). v0.1.4 2026-11-15 (Windows parity: Check Folder
 Access, check states, names and help tags through MSAA, the copy hidden; `release-notes/0.1.4.md`). v0.1.5
 2026-11-15 (Settings' say-results help tag names the screen reader on Windows; a sweep found no
-other Mac wording that shows there).
+other Mac wording that shows there). v0.1.6 2026-11-15 (Settings renamed Preferences, on REAPER's Command/Control+P;
+Say Progress on OSARA's Report selection key; "Already in REAPER"; the Windows copy never asks
+for an audio device and never shows; `release-notes/0.1.6.md`).
 
 Windows has no code signing certificate, so SmartScreen may warn; the README says what to do.
 Updates are still protected: WinSparkle checks the EdDSA signature first.
@@ -228,6 +248,9 @@ through MSAA the way NVDA and JAWS do, and by unit tests on windows-latest):
 | VoiceOver priority 50/90 | Prism `interrupt` False/True |
 | Sparkle, heard not popped up | WinSparkle, the same |
 | sounds .mp3 through afplay | the same sounds as .wav through winsound |
+| Preferences Command+P (and Command+Comma), Say Progress Command+Shift+Space | Control+P (and Control+Comma), Control+Shift+Space: one wx string, `keys.py` |
+| the copy names a quiet output-only device, so REAPER never asks for one | REAPER's Dummy Audio (`[audioconfig] mode=4`), so it never asks (0.1.6) |
+| the copy is started hidden (`open -g -j`) | started SW_HIDE, its own windows hidden every 20 ms while it starts and kept hidden; the main window still shows for about 0.25 s as REAPER starts (0.1.6) |
 
 **Can't be made equal, and why:**
 - The copy's name. On the Mac it's renamed "REAPER for checking presets"; on Windows it's still
@@ -237,10 +260,14 @@ through MSAA the way NVDA and JAWS do, and by unit tests on windows-latest):
 - Choosing a quiet audio device for the copy (`quiet_device`) is Mac-only: REAPER on Windows
   isn't known to ask on first run, and its audio settings there haven't been tried. The worker
   mutes master and track on both systems, so nothing is heard either way.
-- Menu placement: Settings, About and Quit live in the Mac's app menu (macOS puts them there);
+- Menu placement: Preferences, About and Quit live in the Mac's app menu (macOS puts them there);
   on Windows they're in File and Help. Same names, same shortcuts.
 - Nothing Windows-side has been heard with a real screen reader yet; MSAA reads on CI are the
   nearest check.
+- The copy's audio device. Windows uses REAPER's Dummy Audio, which opens nothing. The Mac still
+  names a real output-only device (`quiet_device`), because that's what has been tested there and
+  how Mac REAPER selects Dummy Audio hasn't been checked. Both mean REAPER never asks and nothing
+  is heard (the worker mutes master and track either way).
 
 Native controls; every control has a spoken name and a help tag (`check.sh` counts them);
 controls are made label first, because VoiceOver reads a Mac window in creation order; rows
@@ -318,6 +345,25 @@ busy); nobody on Windows had got that far, which says how untested it is.
    output-only device that isn't the main one, so no microphone is opened (another macOS
    question) and nothing could reach the speakers in use; the worker mutes master and track
    anyway. Rewritten at every start, since devices come and go.
+   **Windows, 0.1.6:** before this, the Windows copy named no device and sat at "You have not
+   yet selected an audio device. Would you like to select your audio device driver now
+   (recommended)?" (a dialog titled just "REAPER", found by the first Windows user). REAPER has
+   no switch to skip it (`-h` lists `-audiocfg`, which shows it). `portable.WIN_AUDIO` names
+   Dummy Audio, `[audioconfig] mode=4` (1 DirectSound, 2 WaveOut, 3 ASIO, 5 WASAPI, as other
+   projects' Windows CI harnesses use it). The copy's own windows (main window, REAPER's
+   unlicensed About box) are hidden every 20 ms while it starts and then kept hidden
+   (`Session._keep_hidden`). **It can't be made fully invisible:** REAPER puts its main window
+   on screen as it starts and is too busy to obey a hide for about a quarter of a second (CI:
+   100 to 250 ms, never focused). STARTUPINFO SW_HIDE doesn't stop it, and placing it at
+   -32000 in reaper.ini (`wnd_x`, `wnd_y`) didn't either: REAPER puts it back on screen. In
+   0.1.5 it stayed up, minimised, until the copy was ready, and on a first start sat behind the
+   audio question for good. A copy
+   that stops at any question says what it said. **CI proves it** (`tools/win_reaper_check.py`,
+   the windows-app job): installs the current REAPER from reaper.fm, starts the copy the 0.1.5
+   way (must show the audio question, or the check can't tell) and the current way (must show
+   no question, nothing on a screen for half a second, nothing left running). CI has no licence, so
+   there the copy runs as an evaluation. The `[nag]` line (licence agreement accepted) is
+   copied from your reaper.ini on both systems, read only.
 3. **REAPER caches folder listings for `EnumerateFiles`.** The worker calls
    `EnumerateFiles(dir, -1)` first, and skips a job it reads as empty instead of deleting it.
 4. **The preset list is read fresh** each time a plug-in is added, so capture and checks run

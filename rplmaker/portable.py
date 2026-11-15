@@ -172,10 +172,6 @@ def ini_text(resource: str | None = None) -> str:
 # harnesses on Windows CI use it. There's no command-line switch for this: REAPER's -h lists
 # -audiocfg, which shows the question, and nothing that skips it.
 WIN_AUDIO = "[audioconfig]\nmode=4\ndummy_srate=48000\ndummy_blocksize=512\n"
-# Windows: REAPER shows its main window while it starts, busy, and only hides it when it next
-# reads its messages (100 to 250 ms on CI). Placed far off every screen, it's never seen even
-# then. These are the [REAPER] keys REAPER keeps its own window's place in.
-WIN_PLACE = "wnd_x=-32000\nwnd_y=-32000\nwnd_w=640\nwnd_h=480\n"
 
 
 def your_nag(resource: str | None = None) -> str | None:
@@ -202,7 +198,7 @@ def full_ini(resource: str | None = None, mac_device: str | None = None) -> str:
     asks for one, and your REAPER's licence-agreement note."""
     text = ini_text(resource)
     if WIN:
-        text += WIN_PLACE + WIN_AUDIO   # still in [REAPER], then its own section
+        text += WIN_AUDIO
     elif mac_device:
         text += (f"coreaudiobs=512\ncoreaudiobsuse=1\ncoreaudiosrateuse=0\ncoreaudioindevnew={mac_device}\n"
                  f"coreaudiooutdevnew={mac_device}\n")

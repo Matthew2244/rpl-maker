@@ -150,7 +150,6 @@ class Naming(unittest.TestCase):
             with mock.patch.object(portable, "WIN", True):
                 text = portable.full_ini(d)
                 self.assertIn("[audioconfig]\nmode=4\n", text)      # Dummy Audio: no device, no question
-                self.assertLess(text.index("wnd_x=-32000"), text.index("[audioconfig]"))   # in [REAPER]
                 self.assertNotIn("mode=5", text)                      # never your own audio settings
                 self.assertNotIn("coreaudio", text)
             with mock.patch.object(portable, "WIN", False):

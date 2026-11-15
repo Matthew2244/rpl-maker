@@ -6,8 +6,9 @@ use (the first Windows user found it doing exactly that in 0.1.5).
 
 Two starts, both watched every 50 ms: first the way 0.1.5 started it (no audio setting), to
 show this check can see the question at all; then the way Magpie starts it now. Passes when
-the second start asked nothing, showed nothing for longer than a moment, and left no REAPER
-running. CI has no REAPER licence, so the copy may stop at REAPER's evaluation window; that's
+the second start asked nothing, nothing stayed on screen (REAPER puts its main window up for
+about a quarter of a second as it starts, too busy to obey a hide, never taking the focus),
+and no REAPER was left running. CI has no REAPER licence, so the copy may stop at REAPER's evaluation window; that's
 reported, never counted as the audio question.
 """
 from __future__ import annotations
@@ -151,9 +152,14 @@ def main() -> int:
         now = asks_about_audio(seen)
         if now:
             problems.append(f"it still asked about audio: {now}")
-        lingered = [t for (c, t), n in longest.items() if n >= 3]
+        # REAPER shows its main window as it starts, while it's too busy to obey a hide; that
+        # lasts about a quarter of a second and never takes the focus. Anything on screen for
+        # half a second is a window that stays (0.1.5's question stayed for good).
+        lingered = [t for (c, t), n in longest.items() if n >= 10]
         if lingered:
-            problems.append(f"windows stayed on screen 150 ms or more: {lingered}")
+            problems.append(f"windows stayed on screen half a second or more: {lingered}")
+        flash = max(longest.values(), default=0)
+        print(f"  longest any window was on screen: about {flash * 50} ms", flush=True)
         if left:
             problems.append("the copy was still running after stop")
     finally:
