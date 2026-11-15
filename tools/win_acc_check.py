@@ -43,6 +43,20 @@ def main() -> int:
         if got != want:
             problems.append(f"{want} is named {got!r}")
 
+    for ctrl, want in ((f.b_make, "Makes a library"), (f.list, "Space checks")):
+        got = acc_of(ctrl).accDescription(0) or ""
+        print(f"help tag: {got[:50]!r}")
+        if not got.startswith(want):
+            problems.append(f"{ctrl.GetLabel() or 'the list'} has no help tag for screen readers ({got!r})")
+    dlg = gui.SettingsDialog(f, f.cfg)
+    for ctrl, want in ((dlg.author, "Your name in file names"), (dlg.twice, None)):
+        a = acc_of(ctrl)
+        print(f"Settings: {a.accName(0)!r}, {str(a.accDescription(0) or '')[:40]!r}")
+        if want and a.accName(0) != want:
+            problems.append(f"Settings field named {a.accName(0)!r}")
+        if not a.accDescription(0):
+            problems.append(f"Settings {a.accName(0)!r} has no help tag for screen readers")
+    dlg.Destroy()
     lst = f.list
     lst.Set(["First, Maker: 12 VST3 presets", "Second, Maker: 3 VST3 presets"])
     speech.check_list(lst, "Plug-ins")

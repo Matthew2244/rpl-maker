@@ -28,7 +28,7 @@ def _objc():
     return ctypes, objc, send, nsstr
 
 
-def _windows_accessible(ctrl, name: str, check_list: bool = False) -> bool:
+def _windows_accessible(ctrl, name: str | None, check_list: bool = False) -> bool:
     """Windows: answer screen readers (NVDA, JAWS, Narrator, through MSAA) with this control's
     name, and for a check list each row's checked state too, which wx's owner-drawn
     CheckListBox doesn't give them at all. Everything not answered here (row names, values,
@@ -40,8 +40,15 @@ def _windows_accessible(ctrl, name: str, check_list: bool = False) -> bool:
 
         class _Acc(wx.Accessible):
             def GetName(self, child_id):
-                if child_id == 0:
+                if child_id == 0 and name:
                     return (wx.ACC_OK, name)
+                return (wx.ACC_NOT_IMPLEMENTED, "")
+
+            def GetDescription(self, child_id):
+                # the help tag, read after the name the way VoiceOver offers a Mac help tag
+                tip = ctrl.GetToolTipText() if child_id == 0 else ""
+                if tip:
+                    return (wx.ACC_OK, tip)
                 return (wx.ACC_NOT_IMPLEMENTED, "")
 
             def GetRole(self, child_id):
@@ -68,6 +75,20 @@ def _windows_accessible(ctrl, name: str, check_list: bool = False) -> bool:
         return True
     except Exception:  # noqa: BLE001 - a missing name must never stop the app
         return False
+
+
+def windows_help_tags(window) -> None:
+    """Windows: every control with a help tag gives it to screen readers as its description
+    (NVDA and JAWS read it after the name), as VoiceOver reads a Mac help tag. Controls
+    already named keep their name; this only adds to the rest. Call once a window is built."""
+    if sys.platform != "win32":
+        return
+    stack = list(window.GetChildren())
+    while stack:
+        c = stack.pop()
+        stack += list(c.GetChildren())
+        if getattr(c, "_rplmaker_acc", None) is None and c.GetToolTipText():
+            _windows_accessible(c, None)
 
 
 def check_list(ctrl, name: str) -> None:

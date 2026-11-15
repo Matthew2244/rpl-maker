@@ -207,6 +207,7 @@ class MainFrame(wx.Frame):
         self.gauge.SetToolTip(f"How far the current job has got. {CMD}-P says what's happening now.")
         s.Add(self.gauge, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.SetSizer(s)
+        speech.windows_help_tags(panel)
 
         self._menus()
         self.find.Bind(wx.EVT_TEXT, lambda e: self.refill())
@@ -907,6 +908,7 @@ class SettingsDialog(wx.Dialog):
         s.Add(btns, 0, wx.EXPAND | wx.ALL, 8)
         self.SetEscapeId(wx.ID_CANCEL)
         self.SetSizerAndFit(s)
+        speech.windows_help_tags(self)
         self.out.SetFocus()
 
     def on_folder(self, e):

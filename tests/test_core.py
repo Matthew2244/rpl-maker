@@ -307,3 +307,23 @@ class FolderAccess(unittest.TestCase):
     def test_protection_read_never_raises(self):
         from rplmaker import access
         self.assertIn(access.ransomware_protection(), (None, "on", "off", "audit"))
+
+
+@unittest.skipUnless(sys.platform == "win32", "Windows only")
+class WindowsHide(unittest.TestCase):
+    def test_hides_a_programs_windows(self):
+        import subprocess
+        import time
+        from rplmaker import portable
+        p = subprocess.Popen([sys.executable, "-c", "import tkinter as t; r = t.Tk(); r.title('x'); r.mainloop()"])
+        try:
+            n = 0
+            for _ in range(40):
+                time.sleep(0.25)
+                n = portable._win_hide(p.pid)
+                if n:
+                    break
+            self.assertGreaterEqual(n, 1)
+            self.assertEqual(portable._win_hide(p.pid), 0)   # nothing visible is left
+        finally:
+            p.kill()

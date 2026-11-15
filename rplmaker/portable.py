@@ -341,6 +341,31 @@ def _win_image(pid: int) -> str | None:
         k.CloseHandle(h)
 
 
+def _win_hide(pid: int) -> int:
+    """Hide the checking copy's own windows, so it's out of the taskbar and Alt-Tab the way
+    the Mac's copy is out of the Dock and Command-Tab (no one should land in it thinking it's
+    their REAPER). Only windows that are visible now, at start, before any plug-in loads: a
+    plug-in's own window (an activation) appears later and stays visible. Never raises."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        hidden = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def each(hwnd, _lparam):
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            if owner.value == pid and user32.IsWindowVisible(hwnd):
+                user32.ShowWindow(hwnd, 0)   # SW_HIDE
+                hidden.append(hwnd)
+            return True
+        user32.EnumWindows(each, 0)
+        return len(hidden)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def _inside(path: str, root: str) -> bool:
     return os.path.realpath(path).startswith(os.path.realpath(root) + os.sep)
 
@@ -413,6 +438,8 @@ class Session:
         while time.time() - t0 < timeout:
             if os.path.exists(ready):
                 self.pid = self._find_pid()
+                if WIN and self.pid:
+                    _win_hide(self.pid)
                 self.log(f"checking REAPER ready after {time.time() - t0:.0f}s, pid {self.pid}")
                 return
             time.sleep(0.3)
