@@ -57,6 +57,15 @@ def main() -> int:
         if not a.accDescription(0):
             problems.append(f"Settings {a.accName(0)!r} has no help tag for screen readers")
     dlg.Destroy()
+    # every shortcut the menus show must be a real key here too (Control on Windows)
+    mb = f.GetMenuBar()
+    for i in range(mb.GetMenuCount()):
+        for item in mb.GetMenu(i).GetMenuItems():
+            label = item.GetItemLabel()
+            if "\t" in label and item.GetAccel() is None:
+                problems.append(f"menu item {label!r} has no working shortcut")
+            elif "\t" in label:
+                print(f"shortcut: {label.split(chr(9))[0]!r} -> {item.GetAccel().ToString()}")
     lst = f.list
     lst.Set(["First, Maker: 12 VST3 presets", "Second, Maker: 3 VST3 presets"])
     speech.check_list(lst, "Plug-ins")

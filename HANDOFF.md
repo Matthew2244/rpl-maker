@@ -211,6 +211,34 @@ the same stuff").** Anything a Mac user gets, a Windows user gets the equivalent
 release. When the Mac feature can't exist on Windows, build what does the same job there
 (folder access below is the model), and record here anything that can't be made equal and why.
 
+How Windows matches (0.1.4, checked on CI by `tools/win_acc_check.py`, which reads the window
+through MSAA the way NVDA and JAWS do, and by unit tests on windows-latest):
+
+| Mac | Windows |
+|---|---|
+| `speech.label` sets the VoiceOver name | `wx.Accessible` answers MSAA with the same name (`speech._windows_accessible`) |
+| VoiceOver reads help tags | each help tag is the control's MSAA description (`speech.windows_help_tags`), read after the name |
+| check list rows read once, as checkboxes (`mac_check_list_reads_once`) | rows answer as checkboxes with their checked state (wx's owner-drawn CheckListBox gave none), and a state change is announced (`speech.row_changed`) |
+| Allow Folder Access, and the first-run question | Check Folder Access (`access.py`), the same question |
+| Escape on "Not Now" given by hand (`escape_presses`) | Windows gives Escape to the Cancel button whatever its label |
+| the copy is `LSUIElement`: no Dock icon, no Command-Tab | the copy's windows are hidden at start (`portable._win_hide`): no taskbar, no Alt-Tab |
+| VoiceOver priority 50/90 | Prism `interrupt` False/True |
+| Sparkle, heard not popped up | WinSparkle, the same |
+| sounds .mp3 through afplay | the same sounds as .wav through winsound |
+
+**Can't be made equal, and why:**
+- The copy's name. On the Mac it's renamed "REAPER for checking presets"; on Windows it's still
+  reaper.exe (Task Manager shows REAPER), because renaming the program hasn't been tried with a
+  real Windows REAPER and portable mode or plug-ins might depend on it. Hidden windows make it
+  much less likely anyone meets it.
+- Choosing a quiet audio device for the copy (`quiet_device`) is Mac-only: REAPER on Windows
+  isn't known to ask on first run, and its audio settings there haven't been tried. The worker
+  mutes master and track on both systems, so nothing is heard either way.
+- Menu placement: Settings, About and Quit live in the Mac's app menu (macOS puts them there);
+  on Windows they're in File and Help. Same names, same shortcuts.
+- Nothing Windows-side has been heard with a real screen reader yet; MSAA reads on CI are the
+  nearest check.
+
 Native controls; every control has a spoken name and a help tag (`check.sh` counts them);
 controls are made label first, because VoiceOver reads a Mac window in creation order; rows
 say their status first; nothing talks on a timer; finishes and failures are spoken, politely
