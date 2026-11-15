@@ -91,6 +91,18 @@ def open_path(path: str, text: bool = False) -> None:
         subprocess.run(["open", "-e", path] if text else ["open", path])
 
 
+def escape_presses(title: str, tries: int = 20) -> None:
+    """Before ShowModal of a message whose way out isn't called Cancel: give that button
+    Escape once the alert is up (macOS only gives it to "Cancel")."""
+    if sys.platform != "darwin":
+        return
+
+    def go(left):
+        if not speech.mac_escape_presses(title) and left:
+            wx.CallLater(50, go, left - 1)
+    wx.CallLater(30, go, tries)
+
+
 def make_label(parent, text):
     return wx.StaticText(parent, label=text)
 
@@ -505,6 +517,8 @@ class MainFrame(wx.Frame):
             self.message("REAPER Isn't Installed", f"REAPER isn't installed on this {COMPUTER}, so there's nothing to "
                          "check presets with. Install REAPER, then try again.")
             return
+        if self.ask_about_access():   # first run on a Mac: the folder questions now, then this run
+            return
         presets_total = sum(p.count for p in chosen)
         if presets_total > 5000:
             dlg = wx.MessageDialog(self, f"That's {presets_total:,} presets to load one by one, which can take "
@@ -630,17 +644,40 @@ class MainFrame(wx.Frame):
         else:
             self.cue("done", words, polite=False)
 
-    def on_access(self):
-        if self.busy:
-            return
-        folders = portable.protected_folders()
-        dlg = wx.MessageDialog(self, ACCESS_WORDS + "\n\nPlaces: " + ", ".join(os.path.basename(f) or f for f in folders),
-                               "Allow Folder Access", wx.OK | wx.CANCEL)
-        dlg.SetOKCancelLabels("Start", "Cancel")
+    def ask_about_access(self) -> bool:
+        """Once ever, on a Mac, before the first run: let the person choose whether macOS asks
+        about their folders now or only if a plug-in needs one (Matthew, 2026-11-15: "the
+        user should decide"). True when access was started; the run follows when it's done."""
+        if sys.platform != "darwin" or self.cfg.get("access_asked") or not portable.protected_folders():
+            return False
+        self.remember_access_asked()
+        dlg = wx.MessageDialog(self, FIRST_ACCESS_WORDS, "Allow Folder Access?", wx.OK | wx.CANCEL)
+        dlg.SetOKCancelLabels("Allow Folder Access Now", "Not Now")   # Return allows, Escape is Not Now
+        escape_presses("Not Now")
         go = dlg.ShowModal() == wx.ID_OK
         dlg.Destroy()
         if not go:
+            return False
+        self.on_access(confirm=False, then=self.on_make)
+        return True
+
+    def remember_access_asked(self):
+        self.cfg["access_asked"] = True
+        settings.save({"access_asked": True})
+
+    def on_access(self, confirm: bool = True, then=None):
+        if self.busy:
             return
+        if confirm:
+            folders = portable.protected_folders()
+            dlg = wx.MessageDialog(self, ACCESS_WORDS + "\n\nPlaces: " + ", ".join(os.path.basename(f) or f for f in folders),
+                                   "Allow Folder Access", wx.OK | wx.CANCEL)
+            dlg.SetOKCancelLabels("Start", "Cancel")
+            go = dlg.ShowModal() == wx.ID_OK
+            dlg.Destroy()
+            if not go:
+                return
+            self.remember_access_asked()   # done by hand: the first run needn't ask
         self.busy = "access"
         self._enable()
 
@@ -652,18 +689,25 @@ class MainFrame(wx.Frame):
                     self.set_progress, f"Opening {d}. If macOS asks, choose Allow.", None))
                 ok = sum(1 for _d, o in res if o)
                 words = f"Done. The checking copy opened {ok} of {plural(len(res), 'place')}."
+                after = then
             except Exception as ex:  # noqa: BLE001
-                words = "Couldn't finish: " + str(ex)
-            wx.CallAfter(self.access_done, words)
+                words = "Couldn't finish: " + str(ex) + \
+                    (" Make Libraries starts the run when you're ready." if then else "")
+                after = None
+            wx.CallAfter(self.access_done, words, after)
         threading.Thread(target=work, daemon=True).start()
 
-    def access_done(self, words):
+    def access_done(self, words, then=None):
         if not self:   # the window was closed while work finished in the background
             return
         self.busy = None
         self._enable()
         self.set_progress(words, 1)
-        say(words, polite=False)
+        if then:   # the run that was waiting: its own first sentence follows this one
+            say(words + " Now making your libraries.", polite=False)
+            wx.CallLater(2500, then)
+        else:
+            say(words, polite=False)
 
     def on_stop(self):
         if self.busy == "build" and not self.stop_flag:
@@ -826,8 +870,15 @@ class SettingsDialog(wx.Dialog):
 
     def on_remove(self, e):
         i = self.folders.GetSelection()
-        if i != wx.NOT_FOUND:
-            self.folders.Delete(i)
+        if i == wx.NOT_FOUND:
+            speech.announce("Select a folder in the list first." if self.folders.GetCount()
+                            else "There are no extra folders to remove.", polite=False)
+            return
+        gone = self.folders.GetString(i)
+        self.folders.Delete(i)
+        if self.folders.GetCount():
+            self.folders.SetSelection(min(i, self.folders.GetCount() - 1))
+        speech.announce(f"Removed {gone}.", polite=True)
 
     def values(self):
         return {"out_dir": self.out.GetValue(), "author": self.author.GetValue().strip(),
@@ -842,6 +893,13 @@ ACCESS_WORDS = ("Some plug-ins look through your Documents folder or other drive
                 "so the questions come together while you're here. Choose Allow for each. Nothing is changed in "
                 "any folder; you can take the access back any time in System Settings, Privacy and Security, "
                 "Files and Folders.")
+
+FIRST_ACCESS_WORDS = ("macOS asks before a new app opens your Documents folder, other drives and a few other "
+                      "places, and some plug-ins look there as they load, so checking can stop until someone "
+                      "answers.\n\nAllow Folder Access Now opens each place once, so the questions come "
+                      "together while you're here (choose Allow for each), then makes your libraries. Not Now "
+                      "starts making them straight away. Either way this isn't asked again; File, Allow "
+                      "Folder Access does it any time.")
 
 HOW_CHECKED = """Each plug-in is loaded in a separate copy of REAPER, hidden and silent, made from your REAPER. Your own REAPER, its settings and its presets are never touched.
 

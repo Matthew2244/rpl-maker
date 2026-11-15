@@ -283,7 +283,7 @@ def _finish_copy(copy_dir, src, resource):
 
 WAITING_WORDS = ("The checking copy of REAPER is waiting on the plug-in. macOS may be asking whether "
                  "REAPER for checking presets can open files in a folder or on a drive. If it is, choose "
-                 "Allow; it carries on by itself.")
+                 "Allow; it carries on by itself. File, Allow Folder Access asks about every place at once.")
 if WIN:   # Windows asks nothing about folders; a plug-in's own window is what holds it up there
     WAITING_WORDS = ("The checking copy of REAPER is waiting on the plug-in. It may be showing a window of its "
                      "own, such as an activation. If that closes, checking carries on by itself; if not, it "

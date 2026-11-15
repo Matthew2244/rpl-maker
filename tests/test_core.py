@@ -141,6 +141,10 @@ class Naming(unittest.TestCase):
             self.assertNotIn("nope", text)
             self.assertEqual(text.count("vstpath64="), 1)
 
+    def test_documents_folder_is_real(self):
+        # on Windows it's asked of the system (OneDrive often moves it)
+        self.assertTrue(os.path.isdir(inventory.documents()) or not os.path.isdir(inventory.HOME))
+
     def test_grouped_reasons(self):
         cut = [("A", "same"), ("B", "same"), ("C", "other")]
         lines = pipeline.reason_lines(cut)

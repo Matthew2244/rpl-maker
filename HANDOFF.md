@@ -195,7 +195,9 @@ script downloads into one folder, unregisters the unzipped app (`lsregister -u`)
 it, and always removes the folder. Cleaned up then: that copy unregistered and removed.
 
 **Released:** v0.1.0 and v0.1.1 (sounds) 2026-11-14; v0.1.2 2026-11-15 (Windows report fix,
-your REAPER's plug-in folders, Windows-safe file names; `release-notes/0.1.2.md`).
+your REAPER's plug-in folders, Windows-safe file names; `release-notes/0.1.2.md`); v0.1.3
+2026-11-15 (the first-run folder access question; Windows Documents from the system, since
+OneDrive often moves it; `release-notes/0.1.3.md`).
 
 Windows has no code signing certificate, so SmartScreen may warn; the README says what to do.
 Updates are still protected: WinSparkle checks the EdDSA signature first.
@@ -250,6 +252,14 @@ busy); nobody on Windows had got that far, which says how untested it is.
    minutes, says once after 8 s that macOS may be asking and to choose Allow; File, Allow
    Folder Access opens each place from the copy so the questions come together. The copy is
    ad-hoc signed, so remaking it after a REAPER update probably means answering again.
+   **The person decides (Matthew, 2026-11-15: "the user should decide on that").** Since
+   0.1.3, the first Make Libraries on a Mac asks once (`MainFrame.ask_about_access`, setting
+   `access_asked`): Allow Folder Access Now runs the access pass and then the run, Not Now
+   just runs. Never asked again; also never asked once the menu item has been used. macOS
+   gives Escape only to a button titled "Cancel", so `gui.escape_presses` gives it to
+   "Not Now" from a wx timer inside the alert's modal loop (wx timers run in the common run
+   loop modes); checked on an unshown NSAlert, not yet by ear. `tools/drive.py` sets
+   `access_asked` so a test never puts that alert on the screen.
    **Never tested with someone answering Allow.** Don't use those plug-ins in automated tests:
    the questions appear on the screen of whoever is at the Mac.
 2. **REAPER's first-run audio question stops the copy before any script runs**, unless
@@ -293,7 +303,7 @@ busy); nobody on Windows had got that far, which says how untested it is.
 
 - The name; an Intel Mac build; Windows code signing. The sounds haven't been heard on Windows.
 - Testing on Windows with a screen reader and a real REAPER (see Tested).
-- Allow Folder Access with someone answering; whether it should run by itself on first use.
+- Allow Folder Access with someone answering, and the first-run question heard with VoiceOver.
 - The packaged Mac app's own scan reads Documents and other drives, so macOS will ask about
   Magpie too when it's opened from the Finder (Info.plist says why).
 - Omnisphere-sized sets: its two install locations are laid out differently, so folders

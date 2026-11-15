@@ -255,3 +255,37 @@ def mac_check_list_reads_once(ctrl) -> None:
         pass
 
 
+
+
+def mac_escape_presses(title: str, window=None) -> bool:
+    """Make Escape press the button called `title` in the open alert (Matthew's rule: Escape
+    always means the way out). macOS gives Escape only to a button called "Cancel", so an
+    alert with "Not Now" would otherwise have no Escape at all. Call it with wx.CallLater
+    just before ShowModal: wx's timers run inside the alert's modal loop. True when done."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        ctypes, objc, send, nsstr = _objc()
+        if window is None:
+            app = send(objc.objc_getClass(b"NSApplication"), "sharedApplication")
+            window = send(app, "modalWindow") or send(app, "keyWindow")
+        if not window:
+            return False
+        want = nsstr(title)
+        button_cls = objc.objc_getClass(b"NSButton")
+        stack = [send(window, "contentView")]
+        while stack:
+            view = stack.pop()
+            if not view:
+                continue
+            if send(view, "isKindOfClass:", button_cls, restype=ctypes.c_bool, argtypes=(ctypes.c_void_p,)) and \
+                    send(send(view, "title"), "isEqualToString:", want, restype=ctypes.c_bool,
+                         argtypes=(ctypes.c_void_p,)):
+                send(view, "setKeyEquivalent:", nsstr("\x1b"), restype=None, argtypes=(ctypes.c_void_p,))
+                return True
+            subs = send(view, "subviews")
+            for i in range(send(subs, "count", restype=ctypes.c_ulong)):
+                stack.append(send(subs, "objectAtIndex:", i, argtypes=(ctypes.c_ulong,)))
+    except Exception:  # noqa: BLE001 - never stop the app over this
+        pass
+    return False

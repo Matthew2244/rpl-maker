@@ -91,6 +91,7 @@ _send(_send(_o.objc_getClass(b"NSApplication"), "sharedApplication"), "setActiva
 f = gui.MainFrame()
 f.cfg["out_dir"] = out
 f.cfg["checked"] = []
+f.cfg["access_asked"] = True   # the first-run folder question is a real alert: never from a test
 f.checked = set()
 f.SetPosition((-3000, -3000))
 f.SetTransparent(0)

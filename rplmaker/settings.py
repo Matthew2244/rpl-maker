@@ -5,7 +5,7 @@ import json
 import os
 import sys
 
-from .inventory import SUPPORT
+from .inventory import DOCUMENTS, SUPPORT
 
 PATH = os.path.join(SUPPORT, "settings.json")
 
@@ -28,7 +28,7 @@ def full_name() -> str:
 
 
 DEFAULTS = {
-    "out_dir": os.path.join(os.path.expanduser("~"), "Documents", "REAPER Preset Libraries"),
+    "out_dir": os.path.join(DOCUMENTS, "REAPER Preset Libraries"),
     "author": full_name(),       # file names read "<plug-in> VST3 by <name>.RPL"
     "min_keep": 5,
     "check_twice": True,

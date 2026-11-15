@@ -28,6 +28,31 @@ SUPPORT = (os.path.join(APPDATA, "RPL Maker") if WIN
            else os.path.join(HOME, "Library", "Application Support", "RPL Maker"))
 CACHE = os.path.join(SUPPORT, "scan-cache.json")
 CACHE_VERSION = 1
+
+
+def documents() -> str:
+    """The person's Documents folder. On Windows it's often moved (OneDrive moves it to
+    OneDrive\\Documents), and the VST3 standard means the real one, so Windows is asked."""
+    if WIN:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class GUID(ctypes.Structure):
+                _fields_ = [("a", wintypes.DWORD), ("b", wintypes.WORD), ("c", wintypes.WORD), ("d", ctypes.c_ubyte * 8)]
+            fid = GUID(0xFDD39AD0, 0x238F, 0x46AF, (ctypes.c_ubyte * 8)(0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7))
+            out = ctypes.c_wchar_p()
+            if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(fid), 0, None, ctypes.byref(out)) == 0:
+                path = out.value
+                ctypes.windll.ole32.CoTaskMemFree(out)
+                if path:
+                    return path
+        except Exception:  # noqa: BLE001 - fall back to the usual place
+            pass
+    return os.path.join(HOME, "Documents")
+
+
+DOCUMENTS = documents()
 REAPER_RESOURCE = (os.path.join(APPDATA, "REAPER") if WIN
                    else os.path.join(HOME, "Library", "Application Support", "REAPER"))
 
@@ -37,12 +62,12 @@ if WIN:
     _pd = os.environ.get("ProgramData", r"C:\ProgramData")
     _pub = os.environ.get("PUBLIC", r"C:\Users\Public")
     SEARCH_ROOTS = [
-        os.path.join(HOME, "Documents", "VST3 Presets"),       # the VST3 standard, per person
+        os.path.join(DOCUMENTS, "VST3 Presets"),              # the VST3 standard, per person
         os.path.join(_pd, "VST3 Presets"),                    # and for everyone
         _pd,                                                  # where makers keep factory content
         os.path.join(_pf, "Common Files"),                    # VST3 bundles and some makers' content
         os.path.join(_pub, "Documents"),
-        os.path.join(HOME, "Documents", "Native Instruments", "User Content"),
+        os.path.join(DOCUMENTS, "Native Instruments", "User Content"),
     ]
 else:
     SEARCH_ROOTS = [
