@@ -10,7 +10,7 @@ computer only) so it can never be mistaken for your REAPER: not by macOS, which 
 otherwise bring your REAPER forward instead of opening a second one, and not by anything
 that looks for a running REAPER by name. On Windows REAPER runs portable when a reaper.ini
 sits beside reaper.exe, so the copy is simply REAPER's program folder copied, started
-minimised and found again by its own pid file.
+hidden and found again by its own pid file.
 
 `Session` starts it hidden, hands it jobs through files, and notices when it hangs or a
 plug-in takes it down, so one bad plug-in costs that plug-in, never the run.
@@ -164,11 +164,52 @@ def ini_text(resource: str | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Windows: REAPER's own Dummy Audio device ([audioconfig] mode=4). Left unset, REAPER on
+# Windows asks which audio device to use at its first start, in a window of its own that
+# doesn't take the focus, and nothing runs until someone answers (found by the first Windows
+# user, 0.1.5). Dummy Audio opens no device at all: nothing can be heard and no microphone is
+# opened. mode=4 is Dummy Audio (1 DirectSound, 2 WaveOut, 3 ASIO, 5 WASAPI), as REAPER test
+# harnesses on Windows CI use it. There's no command-line switch for this: REAPER's -h lists
+# -audiocfg, which shows the question, and nothing that skips it.
+WIN_AUDIO = "[audioconfig]\nmode=4\ndummy_srate=48000\ndummy_blocksize=512\n"
+
+
+def your_nag(resource: str | None = None) -> str | None:
+    """The [nag] value from your REAPER's reaper.ini: REAPER's note that its licence
+    agreement was accepted. Without it a fresh REAPER can stop at that agreement on Windows
+    before any script runs. Read, never written."""
+    resource = resource or inventory.REAPER_RESOURCE
+    try:
+        with open(os.path.join(resource, "reaper.ini"), encoding="utf-8", errors="replace") as f:
+            section = ""
+            for line in f:
+                line = line.strip()
+                if line.startswith("["):
+                    section = line.lower()
+                elif section == "[nag]" and line.lower().startswith("nag="):
+                    return line.partition("=")[2].strip() or None
+    except OSError:
+        pass
+    return None
+
+
+def full_ini(resource: str | None = None, mac_device: str | None = None) -> str:
+    """Everything the copy's reaper.ini says: the settings, an audio device so REAPER never
+    asks for one, and your REAPER's licence-agreement note."""
+    text = ini_text(resource)
+    if WIN:
+        text += WIN_AUDIO
+    elif mac_device:
+        text += (f"coreaudiobs=512\ncoreaudiobsuse=1\ncoreaudiosrateuse=0\ncoreaudioindevnew={mac_device}\n"
+                 f"coreaudiooutdevnew={mac_device}\n")
+    nag = your_nag(resource)
+    if nag:
+        text += f"[nag]\nnag={nag}\n"
+    return text
+
+
 def write_ini(copy_dir: str = COPY_DIR) -> None:
-    text = ini_text()
-    dev = None if WIN else quiet_device()
-    if dev:
-        text += f"coreaudiobs=512\ncoreaudiobsuse=1\ncoreaudiosrateuse=0\ncoreaudioindevnew={dev}\ncoreaudiooutdevnew={dev}\n"
+    text = full_ini(mac_device=None if WIN else quiet_device())
     with open(os.path.join(copy_dir, "reaper.ini"), "w") as f:
         f.write(text)
 
@@ -341,29 +382,51 @@ def _win_image(pid: int) -> str | None:
         k.CloseHandle(h)
 
 
-def _win_hide(pid: int) -> int:
-    """Hide the checking copy's own windows, so it's out of the taskbar and Alt-Tab the way
-    the Mac's copy is out of the Dock and Command-Tab (no one should land in it thinking it's
-    their REAPER). Only windows that are visible now, at start, before any plug-in loads: a
-    plug-in's own window (an activation) appears later and stays visible. Never raises."""
+def win_windows(pid: int) -> list[tuple[int, str, str, bool]]:
+    """Every top-level window a Windows process owns: (handle, class, title, visible).
+    Empty when it can't be read. Never raises."""
     try:
         import ctypes
         from ctypes import wintypes
         user32 = ctypes.windll.user32
-        hidden = []
+        found = []
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         def each(hwnd, _lparam):
             owner = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-            if owner.value == pid and user32.IsWindowVisible(hwnd):
-                user32.ShowWindow(hwnd, 0)   # SW_HIDE
-                hidden.append(hwnd)
+            if owner.value == pid:
+                cls = ctypes.create_unicode_buffer(256)
+                title = ctypes.create_unicode_buffer(512)
+                user32.GetClassNameW(hwnd, cls, 256)
+                user32.GetWindowTextW(hwnd, title, 512)
+                found.append((hwnd, cls.value, title.value, bool(user32.IsWindowVisible(hwnd))))
             return True
         user32.EnumWindows(each, 0)
-        return len(hidden)
+        return found
     except Exception:  # noqa: BLE001
-        return 0
+        return []
+
+
+def _win_hide(pid: int) -> list[str]:
+    """Hide the checking copy's own windows, so it's out of the taskbar and Alt-Tab the way
+    the Mac's copy is out of the Dock and Command-Tab (no one should land in it thinking it's
+    their REAPER). Called over and over while the copy starts, and once more when it's ready;
+    a plug-in's own window (an activation) appears later and stays visible. Returns the
+    titles of question windows (dialogs) that were hidden, so a copy that never gets ready
+    can say what it was asking. Never raises."""
+    asked = []
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        for hwnd, cls, title, visible in win_windows(pid):
+            if visible:
+                user32.ShowWindow(hwnd, 0)   # SW_HIDE
+                if cls == "#32770":         # a dialog: REAPER asking something
+                    asked.append(title or "untitled")
+    except Exception:  # noqa: BLE001
+        pass
+    return asked
 
 
 def _inside(path: str, root: str) -> bool:
@@ -428,13 +491,14 @@ class Session:
         if WIN:
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 7   # SW_SHOWMINNOACTIVE: minimised, and never takes the focus
+            si.wShowWindow = 0   # SW_HIDE: its main window starts hidden, and never takes the focus
             proc = subprocess.Popen([exe_path(self.dir)] + args, cwd=self.dir, startupinfo=si)
             with open(os.path.join(self.dir, "rplmaker", "pid"), "w") as f:
                 f.write(str(proc.pid))
         else:
             subprocess.run(["open", "-n", "-g", "-j", "-a", app_path(self.dir), "--args"] + args, check=True)
         t0 = time.time()
+        asked: list[str] = []
         while time.time() - t0 < timeout:
             if os.path.exists(ready):
                 self.pid = self._find_pid()
@@ -442,11 +506,20 @@ class Session:
                     _win_hide(self.pid)
                 self.log(f"checking REAPER ready after {time.time() - t0:.0f}s, pid {self.pid}")
                 return
-            time.sleep(0.3)
-        self.stop()
+            if WIN:   # out of sight from the start, a question window included
+                for title in _win_hide(proc.pid):
+                    if title not in asked:
+                        asked.append(title)
+                        self.log(f"checking REAPER asked something while starting: {title}")
+            time.sleep(0.1 if WIN else 0.3)
+        self.stop()   # never left running when it didn't get ready (Windows: by its pid file)
         if not os.path.exists(os.path.join(self.dir, "reaper-license.rk")):
             raise CheckerError("The checking copy of REAPER didn't start. REAPER has no licence on this computer, "
                                "so the copy stops at REAPER's evaluation window, and this needs a licensed REAPER.")
+        if asked:
+            raise CheckerError("The checking copy of REAPER didn't start: it stopped to ask something, in a "
+                               f"window called {', '.join(asked)}. It has been closed. Please report this, "
+                               "with that name, so the copy can be set up to answer it.")
         raise CheckerError("The checking copy of REAPER didn't start within 90 seconds. A window may be "
                            f"waiting in it (a question from {'Windows' if WIN else 'macOS'} or REAPER); it has "
                            "been closed.")

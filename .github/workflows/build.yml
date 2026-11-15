@@ -39,6 +39,19 @@ jobs:
         run: |
           python -m pip install comtypes
           python tools/win_acc_check.py
+      - name: A real REAPER, started the way Magpie starts its checking copy (no audio question, no window)
+        shell: pwsh
+        run: |
+          $page = Invoke-WebRequest -UseBasicParsing https://www.reaper.fm/download.php
+          $rel = [regex]::Match($page.Content, 'files/7\.x/reaper\d+_x64-install\.exe').Value
+          if (-not $rel) { throw "couldn't find REAPER's Windows installer on its download page" }
+          "REAPER installer: $rel"
+          Invoke-WebRequest -UseBasicParsing "https://www.reaper.fm/$rel" -OutFile reaper-install.exe
+          $p = Start-Process .\reaper-install.exe -ArgumentList '/S','/D=C:\REAPERCI' -Wait -PassThru
+          if (-not (Test-Path C:\REAPERCI\reaper.exe)) { throw "REAPER didn't install (exit $($p.ExitCode))" }
+          python tools/win_reaper_check.py C:\REAPERCI
+          if ($LASTEXITCODE -ne 0) { throw "the checking copy asked or showed something" }
+          if (Get-Process reaper -ErrorAction SilentlyContinue) { throw "a REAPER was left running" }
       - run: python build_app.py
       - name: Install quietly, run the installed app's self-test, uninstall
         shell: pwsh

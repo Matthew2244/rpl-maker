@@ -141,6 +141,27 @@ class Naming(unittest.TestCase):
             self.assertNotIn("nope", text)
             self.assertEqual(text.count("vstpath64="), 1)
 
+    def test_checking_copy_never_asks_for_an_audio_device(self):
+        from unittest import mock
+        from rplmaker import portable
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "reaper.ini"), "w") as f:
+                f.write("[REAPER]\nverchk=1\n[nag]\nnag=ABC123\n[audioconfig]\nmode=5\n")
+            with mock.patch.object(portable, "WIN", True):
+                text = portable.full_ini(d)
+                self.assertIn("[audioconfig]\nmode=4\n", text)      # Dummy Audio: no device, no question
+                self.assertNotIn("mode=5", text)                      # never your own audio settings
+                self.assertNotIn("coreaudio", text)
+            with mock.patch.object(portable, "WIN", False):
+                text = portable.full_ini(d, mac_device="Quiet Out")
+                self.assertIn("coreaudiooutdevnew=Quiet Out\n", text)
+                self.assertNotIn("[audioconfig]", text)
+            self.assertIn("[nag]\nnag=ABC123\n", text)            # REAPER's licence-agreement note, read
+            # sections in order: the device keys sit in [REAPER] on the Mac, never under [nag]
+            self.assertLess(text.index("coreaudiooutdevnew"), text.index("[nag]"))
+        with tempfile.TemporaryDirectory() as d:                     # a REAPER never opened
+            self.assertNotIn("[nag]", portable.full_ini(d))
+
     def test_documents_folder_is_real(self):
         # on Windows it's asked of the system (OneDrive often moves it)
         if sys.platform == "win32":
@@ -317,13 +338,14 @@ class WindowsHide(unittest.TestCase):
         from rplmaker import portable
         p = subprocess.Popen([sys.executable, "-c", "import tkinter as t; r = t.Tk(); r.title('x'); r.mainloop()"])
         try:
-            n = 0
+            def visible():
+                return [w for w in portable.win_windows(p.pid) if w[3]]
             for _ in range(40):
                 time.sleep(0.25)
-                n = portable._win_hide(p.pid)
-                if n:
+                if visible():
                     break
-            self.assertGreaterEqual(n, 1)
-            self.assertEqual(portable._win_hide(p.pid), 0)   # nothing visible is left
+            self.assertTrue(visible())
+            self.assertEqual(portable._win_hide(p.pid), [])   # a plain window, not a question
+            self.assertEqual(visible(), [])                    # nothing visible is left
         finally:
             p.kill()
