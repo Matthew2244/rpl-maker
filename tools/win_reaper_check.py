@@ -27,6 +27,19 @@ AUDIO_WORDS = ("audio", "device")
 WATCHED: dict = {}   # (class, title) -> what a dialog said, from every watch
 
 
+def on_screen(hwnd) -> bool:
+    """Does the window overlap any part of any screen?"""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    r = wintypes.RECT()
+    if not u.GetWindowRect(hwnd, ctypes.byref(r)):
+        return False
+    x, y = u.GetSystemMetrics(76), u.GetSystemMetrics(77)          # SM_X/YVIRTUALSCREEN
+    w, h = u.GetSystemMetrics(78), u.GetSystemMetrics(79)          # SM_CX/CYVIRTUALSCREEN
+    return r.right > x and r.left < x + w and r.bottom > y and r.top < y + h
+
+
 def watch(pid_of, seconds: float):
     """Sample the copy's windows until `seconds` pass. Returns (every window seen, by
     (class, title)), the longest run of samples one window stayed visible)."""
@@ -37,6 +50,7 @@ def watch(pid_of, seconds: float):
         if pid:
             now = set()
             for hwnd, cls, title, visible in portable.win_windows(pid):
+                visible = visible and on_screen(hwnd)   # shown, and somewhere a person could see it
                 seen[(cls, title)] = seen.get((cls, title), False) or visible
                 if cls == "#32770" and (cls, title) not in said:
                     said[(cls, title)] = portable.win_text(hwnd)
@@ -103,7 +117,7 @@ def new_start(copy_dir: str, seconds: float):
 def describe(seen, longest):
     for (cls, title), was_visible in sorted(seen.items()):
         n = longest.get((cls, title), 0)
-        print(f"    {cls!r} {title!r}: " + (f"visible for {n} samples (~{n * 50} ms)" if was_visible else "never visible"))
+        print(f"    {cls!r} {title!r}: " + (f"on screen for {n} samples (~{n * 50} ms)" if was_visible else "never on screen"))
         if (cls, title) in WATCHED:
             print(f"      it said: {WATCHED[(cls, title)][:300]!r}")
 
@@ -139,7 +153,7 @@ def main() -> int:
             problems.append(f"it still asked about audio: {now}")
         lingered = [t for (c, t), n in longest.items() if n >= 3]
         if lingered:
-            problems.append(f"windows stayed visible 150 ms or more: {lingered}")
+            problems.append(f"windows stayed on screen 150 ms or more: {lingered}")
         if left:
             problems.append("the copy was still running after stop")
     finally:
