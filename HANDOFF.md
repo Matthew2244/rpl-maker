@@ -200,7 +200,9 @@ it, and always removes the folder. Cleaned up then: that copy unregistered and r
 your REAPER's plug-in folders, Windows-safe file names; `release-notes/0.1.2.md`); v0.1.3
 2026-11-15 (the first-run folder access question; Windows Documents from the system, since
 OneDrive often moves it; `release-notes/0.1.3.md`). v0.1.4 2026-11-15 (Windows parity: Check Folder
-Access, check states, names and help tags through MSAA, the copy hidden; `release-notes/0.1.4.md`).
+Access, check states, names and help tags through MSAA, the copy hidden; `release-notes/0.1.4.md`). v0.1.5
+2026-11-15 (Settings' say-results help tag names the screen reader on Windows; a sweep found no
+other Mac wording that shows there).
 
 Windows has no code signing certificate, so SmartScreen may warn; the README says what to do.
 Updates are still protected: WinSparkle checks the EdDSA signature first.
