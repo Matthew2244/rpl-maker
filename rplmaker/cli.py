@@ -48,6 +48,9 @@ def main(argv=None) -> int:
         portable.make(progress=print)
         return 0
     if args.cmd == "access":
+        if portable.WIN:
+            print("Windows doesn't ask about folders, so there's nothing to allow.")
+            return 0
         if portable.status() != "ready":
             portable.make(progress=print)
         print("macOS may ask, once per place, whether REAPER for checking presets can open files there. Choose Allow.")

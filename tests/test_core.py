@@ -115,6 +115,32 @@ class Naming(unittest.TestCase):
         self.assertEqual(pipeline.file_name(p, "Sam"), "a-b VST3 by Sam.RPL")
         self.assertEqual(pipeline.file_name(p, ""), "a-b VST3.RPL")
 
+    def test_file_names_every_system_can_save(self):
+        self.assertEqual(pipeline.safe_file_name('A "B" <C>|D?*.'), "A -B- -C--D--")
+        self.assertEqual(pipeline.safe_file_name(" ... "), "Untitled")
+
+    def test_report_on_every_system(self):
+        # %-d and %-I stop strftime on Windows; the report spells the date out itself
+        import datetime
+        p = inventory.Plugin("VST3: Glue (V)", "Glue", "V", "0" * 32, "x.vst3", False)
+        r = pipeline.Result(p, status="made", kept=[("a", "exact")] * 6,
+                            files=[("/out/V/Glue 1.RPL", 3), ("/out/V/Glue 2.RPL", 3)])
+        text = pipeline.report_text([r, pipeline.Result(p, status="skipped")], "/out",
+                                    datetime.datetime(2026, 11, 5, 9, 7))
+        self.assertTrue(text.startswith("Preset libraries made Thursday 5 November 2026 at 9:07 AM"), text[:80])
+        self.assertIn("2 libraries made for 1 of 2 plug-ins, 6 working presets in all.", text)
+
+    def test_checking_copy_looks_where_your_reaper_looks(self):
+        from rplmaker import portable
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIn("vstpath64=", portable.ini_text(d))       # no reaper.ini: this app's own
+            with open(os.path.join(d, "reaper.ini"), "w") as f:
+                f.write("[audio]\nvstpath64=nope\n[REAPER]\nvstpath64=/Volumes/Plugs/VST3\nvstpath_arm64=\n")
+            text = portable.ini_text(d)
+            self.assertIn("vstpath64=/Volumes/Plugs/VST3\n", text)
+            self.assertNotIn("nope", text)
+            self.assertEqual(text.count("vstpath64="), 1)
+
     def test_grouped_reasons(self):
         cut = [("A", "same"), ("B", "same"), ("C", "other")]
         lines = pipeline.reason_lines(cut)

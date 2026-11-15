@@ -125,8 +125,47 @@ def quiet_device() -> str | None:
     return outs[0]["_name"] if outs else None
 
 
+def your_vst_paths(resource: str | None = None) -> dict:
+    """The plug-in folders your own REAPER looks in, when you've set any (Preferences, VST),
+    from its reaper.ini: {"vstpath64": ..., "vstpath_arm64": ...}. The plug-in list the copy
+    is given names files, not folders, so the copy must look in the same folders as your
+    REAPER or a plug-in kept somewhere else (another drive, a custom folder) can't be loaded."""
+    resource = resource or inventory.REAPER_RESOURCE
+    out = {}
+    try:
+        with open(os.path.join(resource, "reaper.ini"), encoding="utf-8", errors="replace") as f:
+            section = ""
+            for line in f:
+                line = line.strip()
+                if line.startswith("["):
+                    section = line.lower()
+                elif section == "[reaper]" and "=" in line:
+                    k, _, v = line.partition("=")
+                    if k in ("vstpath64", "vstpath_arm64") and v.strip():
+                        out[k] = v.strip()
+    except OSError:
+        pass
+    return out
+
+
+def ini_text(resource: str | None = None) -> str:
+    """The copy's reaper.ini: this app's settings, with your REAPER's plug-in folders when
+    you've set any, Windows variables like %CommonProgramFiles% spelled out."""
+    lines = []
+    yours = your_vst_paths(resource)
+    for line in INI.splitlines():
+        k, sep, v = line.partition("=")
+        if k in yours:
+            v = yours.pop(k)
+        if k.startswith("vstpath"):
+            v = os.path.expandvars(v)
+        lines.append(f"{k}={v}" if sep else line)
+    lines += [f"{k}={os.path.expandvars(v)}" for k, v in yours.items()]
+    return "\n".join(lines) + "\n"
+
+
 def write_ini(copy_dir: str = COPY_DIR) -> None:
-    text = INI
+    text = ini_text()
     dev = None if WIN else quiet_device()
     if dev:
         text += f"coreaudiobs=512\ncoreaudiobsuse=1\ncoreaudiosrateuse=0\ncoreaudioindevnew={dev}\ncoreaudiooutdevnew={dev}\n"
@@ -182,8 +221,17 @@ def make(copy_dir: str = COPY_DIR, src: str | None = None, resource: str = inven
     """Make (or remake) the checking copy. Reads your REAPER; writes only inside copy_dir."""
     src = src or find_reaper()
     if not src or not os.path.isdir(src):
-        raise CheckerError("REAPER isn't installed on this Mac, so there's nothing to check presets with.")
-    say = progress or (lambda s: None)
+        raise CheckerError("REAPER isn't installed on this computer, so there's nothing to check presets with.")
+    try:
+        _make(copy_dir, src, resource, progress or (lambda s: None))
+    except (OSError, subprocess.CalledProcessError) as e:
+        # plain words, not a command line: usually a full disk or a REAPER being updated
+        why = getattr(e, "strerror", None) or "copying or signing it failed"
+        raise CheckerError(f"Couldn't make the checking copy of REAPER: {why}. Check there's free space, "
+                           "and that REAPER isn't being updated, then try again.") from e
+
+
+def _make(copy_dir, src, resource, say) -> None:
     os.makedirs(copy_dir, exist_ok=True)
     if WIN:
         say("Copying REAPER")
@@ -236,6 +284,10 @@ def _finish_copy(copy_dir, src, resource):
 WAITING_WORDS = ("The checking copy of REAPER is waiting on the plug-in. macOS may be asking whether "
                  "REAPER for checking presets can open files in a folder or on a drive. If it is, choose "
                  "Allow; it carries on by itself.")
+if WIN:   # Windows asks nothing about folders; a plug-in's own window is what holds it up there
+    WAITING_WORDS = ("The checking copy of REAPER is waiting on the plug-in. It may be showing a window of its "
+                     "own, such as an activation. If that closes, checking carries on by itself; if not, it "
+                     "gives up on that plug-in after 4 minutes.")
 
 
 def protected_folders() -> list[str]:
@@ -340,6 +392,12 @@ class Session:
         with open(os.path.join(self.dir, "Scripts", "__startup.lua"), "w") as f:
             f.write('dofile("%s")\n' % worker.replace("\\", "\\\\").replace('"', '\\"'))
         write_ini(self.dir)   # devices come and go; name one that's here today
+        cache = inventory.cache_file()
+        if cache:   # your REAPER's plug-in list as it is today, so the copy has nothing new to scan
+            try:
+                shutil.copy2(cache, os.path.join(self.dir, os.path.basename(cache)))
+            except OSError:
+                pass
         ini = os.path.join(self.dir, "reaper.ini")
         args = ["-cfgfile", ini, "-nosplash", "-newinst", "-ignoreerrors", "-new"]
         if WIN:
@@ -363,7 +421,8 @@ class Session:
             raise CheckerError("The checking copy of REAPER didn't start. REAPER has no licence on this computer, "
                                "so the copy stops at REAPER's evaluation window, and this needs a licensed REAPER.")
         raise CheckerError("The checking copy of REAPER didn't start within 90 seconds. A window may be "
-                           "waiting in it (a question from macOS or REAPER); it has been closed.")
+                           f"waiting in it (a question from {'Windows' if WIN else 'macOS'} or REAPER); it has "
+                           "been closed.")
 
     def stop(self) -> None:
         pid = self.pid or self._find_pid()

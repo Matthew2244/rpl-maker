@@ -28,6 +28,7 @@ updating. Names offered: Magpie, Preset Hound, Squirrel, Trove, Hoardling.
     .venv/bin/python tools/drive.py OUT [NAME...]   the real window, off-screen, never activated (DRIVE_STOP=s presses Stop)
     .venv/bin/python build_app.py                build for this system, ends with the built app's self-test
     .venv/bin/python tools/release_mac.py vX.Y.Z --notes NOTES.md   finish a release (below)
+    .venv/bin/python tools/verify_release.py [vX.Y.Z]   the published release, checked from outside
     .venv/bin/python tools/make_icon.py          redraw assets/icon.*
     .venv/bin/python tools/make_sound_candidates.py   sound candidates and audition reels (not wired in)
 
@@ -65,7 +66,10 @@ checking decides what works.
 Support/RPL Maker/checking-reaper`; Windows: `%APPDATA%\RPL Maker\checking-reaper`). From the
 person's REAPER it only reads two files, copied: the licence (else the copy stops at the
 evaluation window) and the plug-in scan cache (else it rescans everything). Remade when
-REAPER changes. `__startup.lua` runs `worker.lua` (copied beside the copy at each start, so
+REAPER changes. Its reaper.ini uses your REAPER's own plug-in folders (`vstpath64`,
+`vstpath_arm64` from your reaper.ini) when you've set any, because the plug-in list names
+files, not folders: a plug-in on another drive couldn't be loaded otherwise. The plug-in list
+is copied again at every start, so the copy has nothing new to scan. `__startup.lua` runs `worker.lua` (copied beside the copy at each start, so
 the copy never reads from inside the app), which mutes master and track before any plug-in
 loads and polls `rplmaker/jobs/` on a defer loop: one job file in, `.out` written as it
 goes, `.done` at the end, both deleted once read.
@@ -179,10 +183,19 @@ uninstalls, and attaches `Magpie-Setup.exe`), then on the Studio
 with the hardened runtime, notarize, staple, Gatekeeper, the signed app's self-test, the Mac
 zip and appcast.xml uploaded, then appcast-windows.xml if CI has attached the installer. If it
 hadn't yet: `tools/release_mac.py vX.Y.Z --windows-only --notes ...` once it has (no rebuild).
+Last, it runs `tools/verify_release.py`: both `latest/download` update lists name this
+version and this tag's files, each download matches its length and EdDSA signature against
+the app's public key (openssl), and the downloaded Mac app passes codesign and Gatekeeper as
+Notarized Developer ID.
 
-**Released:** v0.1.0, 2026-11-14. Checked from outside afterwards: both `latest/download`
-update lists resolve, both downloads match their EdDSA signatures and lengths against the
-app's public key, and the downloaded Mac app passes Gatekeeper as Notarized Developer ID.
+**Never check a release by hand in a temporary folder and leave it.** The 0.1.0 check did
+(`$TMPDIR/tmp_se0gq4i/Magpie.app`), and on 2026-11-15 macOS showed "Magpie.app is damaged":
+macOS registers any app it sees, then clears old temporary files a piece at a time. The
+script downloads into one folder, unregisters the unzipped app (`lsregister -u`), never runs
+it, and always removes the folder. Cleaned up then: that copy unregistered and removed.
+
+**Released:** v0.1.0 and v0.1.1 (sounds) 2026-11-14; v0.1.2 2026-11-15 (Windows report fix,
+your REAPER's plug-in folders, Windows-safe file names; `release-notes/0.1.2.md`).
 
 Windows has no code signing certificate, so SmartScreen may warn; the README says what to do.
 Updates are still protected: WinSparkle checks the EdDSA signature first.
@@ -209,6 +222,10 @@ On an Apple silicon Mac with REAPER 7.85, every preset loaded and judged, checke
 | Pianoteq 9 | NKS, VST2 chunk | 799/800 | controls only: its state names a factory preset |
 | Massive X | NKS | 0/64, not made | correctly refused: its NKS data isn't its VST3 state |
 
+0.1.2 checked on the Mac with the real window off-screen (`tools/drive.py`, bx_glue 88/88 with
+the copy using the Studio's own plug-in folders) and 28 unit tests, which CI also runs on
+Windows; the report's date is one of them, since `%-d` stopped the report there.
+
 Also: Stop part-way through a plug-in (finished libraries kept, the rest reported), quitting
 mid-run (the copy ends and isn't restarted), batches across the 500 boundary (Pianoteq: same
 799), the notarized app's own binary making a library, 22 unit tests.
@@ -219,7 +236,9 @@ window with NVDA, JAWS or Narrator, made a library with a Windows REAPER, or upd
 WinSparkle. Things that might need work there: whether the portable copy of REAPER asks
 anything on its first run (on the Mac it asked which audio device to use, until reaper.ini
 named one), whether starting it minimised really keeps it out of the way, the preset folders
-searched (`inventory.SEARCH_ROOTS`), and how NVDA reads the check list.
+searched (`inventory.SEARCH_ROOTS`), and how NVDA reads the check list. Before 0.1.2 a Windows
+run could never finish (the report's `%-d` raised in the run's thread and the window stayed
+busy); nobody on Windows had got that far, which says how untested it is.
 
 ## Things that bite
 

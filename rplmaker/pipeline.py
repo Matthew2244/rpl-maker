@@ -27,6 +27,10 @@ from . import compare, formats, portable, states
 from .inventory import Plugin
 
 DEFAULT_NAME = "0 Default settings"
+STUCK_WORDS = ("The plug-in stopped REAPER responding as it loaded, for 4 minutes. It may have been waiting "
+               "for an activation" + (", or for a window of its own to be closed." if portable.WIN else
+                                      ", or for macOS to allow it into a folder (File, Allow Folder Access asks "
+                                      "for that ahead of time)."))
 
 
 @dataclass
@@ -91,7 +95,9 @@ def reason_lines(cut: list, limit_names: int = 12) -> list[str]:
 
 
 def safe_file_name(s: str) -> str:
-    s = re.sub(r'[/:\\\x00-\x1f]', "-", s).strip(" .")
+    """A name every system can save: none of the characters Windows refuses (a library made
+    on a Mac may be copied to a PC), no control characters, no trailing dot or space."""
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", s).strip(" .")
     return s or "Untitled"
 
 
@@ -291,9 +297,7 @@ class Builder:
             r.status = "failed"
             r.note = {"addfail": "REAPER couldn't load the plug-in.",
                       "crashed": "The plug-in took REAPER down as it loaded.",
-                      "stuck": "The plug-in stopped REAPER responding as it loaded, for 4 minutes. It may "
-                               "have been waiting for macOS to allow it into a folder (File, Allow Folder "
-                               "Access asks for that ahead of time), or for an activation."}.get(str(e), str(e))
+                      "stuck": STUCK_WORDS}.get(str(e), str(e))
             return r
         try:
             default = states.parse_state(states.chunk_state(cap.get("STATE", "").split("|")))
@@ -532,9 +536,13 @@ def report_text(results: list[Result], outdir: str, when: datetime.datetime | No
     when = when or datetime.datetime.now()
     made = [r for r in results if r.status == "made"]
     other = [r for r in results if r.status != "made"]
-    L = [f"Preset libraries made {when:%A %-d %B %Y at %-I:%M %p}", ""]
+    # spelled out by hand: %-d and %-I don't exist on Windows, where they stop the report
+    hour = when.hour % 12 or 12
+    L = [f"Preset libraries made {when:%A} {when.day} {when:%B %Y} at {hour}:{when:%M %p}", ""]
     total = sum(len(r.kept) for r in made)
-    L.append(f"{len(made)} of {len(results)} libraries made, {total} working presets in all.")
+    n_files = sum(len(r.files) for r in made)
+    L.append(f"{n_files} {'library' if n_files == 1 else 'libraries'} made for {len(made)} of "
+             f"{len(results)} plug-in{'' if len(results) == 1 else 's'}, {total} working presets in all.")
     L.append(f"Saved in {outdir}")
     L.append("")
     L.append("Every preset here was loaded by name in a separate copy of REAPER, and the plug-in's")

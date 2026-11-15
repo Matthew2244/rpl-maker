@@ -8,7 +8,9 @@ tag and attaches it. This, run on the Mac that holds the keys (they never go to 
    runs the signed app's self-test;
 3. writes appcast.xml (Mac) and, once CI has attached the installer, appcast-windows.xml,
    both signed with this app's EdDSA key (tools/appcast.py);
-4. uploads the Mac zip and both update lists to the release (not with --no-upload).
+4. uploads the Mac zip and both update lists to the release (not with --no-upload);
+5. checks the published release from outside (tools/verify_release.py), in a temporary folder
+   it always removes.
 """
 import argparse
 import base64
@@ -53,7 +55,8 @@ def main():
         sys.exit(f"The tag says {a.tag} but the app says {VERSION}.")
     os.chdir(ROOT)
     if a.windows_only:
-        windows_list(a)
+        if windows_list(a) and not a.no_upload:
+            verify(a.tag, mac_only=False)
         return
     ident = developer_id()
     print("Signing as:", ident)
@@ -103,7 +106,16 @@ def main():
             + notes, stdout=f)
     if not a.no_upload:
         run(["gh", "release", "upload", a.tag, "-R", REPO, out, cast, "--clobber"])
-    windows_list(a)
+    win = windows_list(a)
+    if not a.no_upload:
+        verify(a.tag, mac_only=not win)
+
+
+def verify(tag, mac_only):
+    """The release as an installed copy will see it: update lists, signatures, Gatekeeper."""
+    cmd = [sys.executable, os.path.join("tools", "verify_release.py"), tag] + (["--mac-only"] if mac_only else [])
+    if subprocess.run(cmd).returncode:
+        sys.exit("The published release didn't pass its check; see above.")
 
 
 def windows_list(a):
@@ -118,7 +130,7 @@ def windows_list(a):
     if got.returncode != 0 or not os.path.exists(setup):
         print("The Windows installer isn't on the release yet (CI still building?). When it is, run: "
               f"tools/release_mac.py {a.tag} --windows-only" + (f" --notes {a.notes}" if a.notes else ""))
-        return
+        return False
     wcast = os.path.join("dist", "appcast-windows.xml")
     with open(wcast, "w") as f:
         run([sys.executable, os.path.join("tools", "appcast.py"), setup, VERSION, f"{base}/{APP_NAME}-Setup.exe",
@@ -126,6 +138,7 @@ def windows_list(a):
     if not a.no_upload:
         run(["gh", "release", "upload", a.tag, "-R", REPO, wcast, "--clobber"])
     print("Done: appcast-windows.xml" + (" built." if a.no_upload else f" on {a.tag}."))
+    return True
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ import wx
 from . import APP_NAME, VERSION, formats, inventory, pipeline, portable, settings, sounds, speech, updates
 
 CMD = "Command" if sys.platform == "darwin" else "Control"
+COMPUTER = "Mac" if sys.platform == "darwin" else "computer"
 
 
 class StopRequested(Exception):
@@ -381,11 +382,13 @@ class MainFrame(wx.Frame):
         self.count_words()
         self.show_details()
 
-    def count_words(self):
+    def checked_words(self) -> str:
         n = len(self.checked)
         total = sum(p.count for p in self.plugs if p.class_id in self.checked)
-        self.count.SetLabel(f"Showing {plural(len(self.shown), 'plug-in')}. "
-                            + (f"{n} checked, {plural(total, 'preset')} to check." if n else "None checked."))
+        return f"{n} checked, {plural(total, 'preset')} to check." if n else "None checked."
+
+    def count_words(self):
+        self.count.SetLabel(f"Showing {plural(len(self.shown), 'plug-in')}. " + self.checked_words())
         self._enable()
 
     def show_details(self):
@@ -415,8 +418,9 @@ class MainFrame(wx.Frame):
         else:
             self.checked.discard(p.class_id)
         self.count_words()
-        # VoiceOver can read the row before the check lands; say the new count instead
-        say(self.count.GetLabel(), polite=True)
+        # VoiceOver can read the row before the check lands; say the new count instead (not
+        # how many are shown: that hasn't changed, and it's said on every Space)
+        say(self.checked_words(), polite=True)
 
     def set_all(self, on: bool):
         if on:
@@ -434,6 +438,9 @@ class MainFrame(wx.Frame):
     # -- scanning ----------------------------------------------------------------------------
     def scan(self):
         if self.busy:
+            say({"build": "Libraries are being made. Look for presets again when the run is done.",
+                 "access": "The checking copy is opening your folders. Look for presets again when that's done."}
+                .get(self.busy, "Already looking for presets."), polite=False)
             return
         self.busy = "scan"
         self._enable()
@@ -466,7 +473,7 @@ class MainFrame(wx.Frame):
         if err:
             words = "Couldn't look for presets: " + err
         elif not plugs and portable.find_reaper() is None:
-            words = ("REAPER isn't installed on this Mac. This app makes presets for REAPER and checks them in "
+            words = (f"REAPER isn't installed on this {COMPUTER}. This app makes presets for REAPER and checks them in "
                      "a copy of it, so install REAPER, open it once so it finds your plug-ins, then Look for "
                      "Presets Again.")
         elif not plugs:
@@ -495,7 +502,7 @@ class MainFrame(wx.Frame):
             return
         st = portable.status()
         if st == "missing":
-            self.message("REAPER Isn't Installed", "REAPER isn't installed on this Mac, so there's nothing to "
+            self.message("REAPER Isn't Installed", f"REAPER isn't installed on this {COMPUTER}, so there's nothing to "
                          "check presets with. Install REAPER, then try again.")
             return
         presets_total = sum(p.count for p in chosen)
@@ -550,6 +557,8 @@ class MainFrame(wx.Frame):
                                         split_over=int(self.cfg["split_over"]) if self.cfg["split_big"] else 0,
                                         events=events, stop=lambda: self.stop_flag)
 
+        note = [""]
+
         def work():
             err = None
             results = []
@@ -564,8 +573,14 @@ class MainFrame(wx.Frame):
                 pass
             except Exception as ex:  # noqa: BLE001
                 err = str(ex)
-            report = pipeline.write_report(results, out) if results else None
-            wx.CallAfter(self.build_done, results, report, err)
+            report = None
+            if results:
+                try:
+                    report = pipeline.write_report(results, out)
+                except Exception as ex:  # noqa: BLE001 - the run's end must still be said
+                    report = None
+                    note[0] = f" The report couldn't be saved: {getattr(ex, 'strerror', None) or ex}."
+            wx.CallAfter(self.build_done, results, report, err, note[0])
         threading.Thread(target=work, daemon=True).start()
 
     def one_done(self, r: pipeline.Result, speak: bool = True):
@@ -584,7 +599,7 @@ class MainFrame(wx.Frame):
             if event or text:
                 self.cue(event, text, polite=r.status == "made")
 
-    def build_done(self, results, report, err):
+    def build_done(self, results, report, err, note=""):
         if not self:   # the window was closed while work finished in the background
             return
         self.busy = None
@@ -602,9 +617,9 @@ class MainFrame(wx.Frame):
         if err:
             words = "Couldn't make libraries: " + err
         elif self.stop_flag:
-            words = f"Stopped. {tally}." + (" Open Report has the details." if report else "")
+            words = f"Stopped. {tally}." + (" Open Report has the details." if report else note)
         else:
-            words = f"Done. {tally}. Open Report has the details."
+            words = f"Done. {tally}." + (" Open Report has the details." if report else note)
         self.set_progress(words, 1)
         self._enable()
         if err:
@@ -668,6 +683,8 @@ class MainFrame(wx.Frame):
             open_path(self.last_report, text=True)
         elif self.last_report:
             say("The report isn't there any more; it may have been moved or deleted.", polite=False)
+        else:
+            say("There's no report yet. One is written at the end of each run.", polite=False)
 
     def on_settings(self):
         dlg = SettingsDialog(self, self.cfg)
