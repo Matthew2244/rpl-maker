@@ -168,7 +168,7 @@ def main() -> int:
         print("PROBLEM:", p)
     if not problems and not before:
         problems.append("the old way didn't ask about audio here, so this check can't tell the question apart")
-    print("No audio question, nothing shown, nothing left running." if not problems else "FAILED")
+    print("No audio question, nothing stayed on screen, nothing left running." if not problems else "FAILED")
     return 1 if problems else 0
 
 

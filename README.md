@@ -31,8 +31,9 @@ Your own REAPER, its settings and its presets are never changed. The separate co
 from your REAPER its licence, its list of plug-ins, and two things from its settings file:
 the folders it looks for plug-ins in, and its note that you accepted REAPER's licence
 agreement. Magpie also reads your REAPER's presets folder, to notice plug-ins already done.
-The copy uses no sound device on Windows (REAPER's Dummy Audio) and a quiet output-only one
-on a Mac, so it never stops to ask which to use, and nothing is ever heard.
+The copy uses no sound device on Windows (REAPER's Dummy Audio), and on a Mac an output-only
+one that isn't your main one when there is one, so it never stops to ask which to use. It
+mutes itself before loading any plug-in either way.
 
 Libraries are saved in a folder called REAPER Preset Libraries in your Documents folder. You
 can choose another folder in Preferences.
