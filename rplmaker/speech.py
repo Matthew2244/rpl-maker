@@ -28,8 +28,76 @@ def _objc():
     return ctypes, objc, send, nsstr
 
 
+def _windows_accessible(ctrl, name: str, check_list: bool = False) -> bool:
+    """Windows: answer screen readers (NVDA, JAWS, Narrator, through MSAA) with this control's
+    name, and for a check list each row's checked state too, which wx's owner-drawn
+    CheckListBox doesn't give them at all. Everything not answered here (row names, values,
+    the rest) still comes from Windows. False when this wx has no accessibility."""
+    try:
+        import wx
+        if not hasattr(wx, "Accessible"):
+            return False
+
+        class _Acc(wx.Accessible):
+            def GetName(self, child_id):
+                if child_id == 0:
+                    return (wx.ACC_OK, name)
+                return (wx.ACC_NOT_IMPLEMENTED, "")
+
+            def GetRole(self, child_id):
+                if check_list and child_id > 0:
+                    return (wx.ACC_OK, wx.ROLE_SYSTEM_CHECKBUTTON)
+                return (wx.ACC_NOT_IMPLEMENTED, 0)
+
+            def GetState(self, child_id):
+                if not (check_list and 0 < child_id <= ctrl.GetCount()):
+                    return (wx.ACC_NOT_IMPLEMENTED, 0)
+                row = child_id - 1
+                st = wx.ACC_STATE_SYSTEM_FOCUSABLE | wx.ACC_STATE_SYSTEM_SELECTABLE
+                if ctrl.GetSelection() == row:
+                    st |= wx.ACC_STATE_SYSTEM_SELECTED
+                    if wx.Window.FindFocus() is ctrl:
+                        st |= wx.ACC_STATE_SYSTEM_FOCUSED
+                if ctrl.IsChecked(row):
+                    st |= wx.ACC_STATE_SYSTEM_CHECKED
+                return (wx.ACC_OK, st)
+
+        acc = _Acc(ctrl)
+        ctrl.SetAccessible(acc)
+        ctrl._rplmaker_acc = acc   # alive as long as the control
+        return True
+    except Exception:  # noqa: BLE001 - a missing name must never stop the app
+        return False
+
+
+def check_list(ctrl, name: str) -> None:
+    """A check list both systems read the same way: its name, then each row as a checkbox
+    with its text once and whether it's checked."""
+    if sys.platform == "win32":
+        _windows_accessible(ctrl, name, check_list=True)
+        return
+    mac_check_list_reads_once(ctrl)
+    label(ctrl, name)
+
+
+def row_changed(ctrl, row: int) -> None:
+    """Windows: tell screen readers a row's checked state changed, so NVDA says "checked" as
+    VoiceOver does. Nothing to do on the Mac, which reads the checkbox itself."""
+    if sys.platform != "win32":
+        return
+    try:
+        import wx
+        wx.Accessible.NotifyEvent(wx.ACC_EVENT_OBJECT_STATECHANGE, ctrl, wx.OBJID_CLIENT, row + 1)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def label(ctrl, text: str) -> None:
-    """The control's spoken name on the Mac, where wx has no API for it."""
+    """The control's spoken name: on the Mac, where wx has no API for it; on Windows, so a
+    control doesn't take its name from whatever text happens to sit before it."""
+    if sys.platform == "win32":
+        _windows_accessible(ctrl, text)
+        return
     if sys.platform != "darwin":
         return
     try:

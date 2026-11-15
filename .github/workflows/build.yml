@@ -35,6 +35,10 @@ jobs:
       - name: Inno Setup, for the installer
         shell: pwsh
         run: if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+      - name: What a screen reader gets from the window (MSAA, as NVDA and JAWS read it)
+        run: |
+          python -m pip install comtypes
+          python tools/win_acc_check.py
       - run: python build_app.py
       - name: Install quietly, run the installed app's self-test, uninstall
         shell: pwsh

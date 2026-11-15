@@ -161,8 +161,7 @@ class MainFrame(wx.Frame):
         ll = make_label(panel, "Plug-ins:")
         s.Add(ll, 0, wx.LEFT | wx.TOP, 6)
         self.list = wx.CheckListBox(panel, choices=[])
-        speech.mac_check_list_reads_once(self.list)
-        speech.label(self.list, "Plug-ins")
+        speech.check_list(self.list, "Plug-ins")
         self.list.SetToolTip("Space checks or unchecks the selected plug-in. Make Libraries makes a library for "
                              "every checked one. The details below say what was found for the selected one.")
         s.Add(self.list, 3, wx.EXPAND | wx.ALL, 6)
@@ -434,6 +433,7 @@ class MainFrame(wx.Frame):
             self.checked.add(p.class_id)
         else:
             self.checked.discard(p.class_id)
+        speech.row_changed(self.list, i)
         self.count_words()
         # VoiceOver can read the row before the check lands; say the new count instead (not
         # how many are shown: that hasn't changed, and it's said on every Space)
