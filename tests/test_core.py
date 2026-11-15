@@ -264,3 +264,46 @@ class Sounds(unittest.TestCase):
     def test_off_means_silent_and_no_wait(self):
         self.assertEqual(self.s.play("done", enabled=False), 0.0)
         self.assertEqual(self.played, [])
+
+
+class FolderAccess(unittest.TestCase):
+    """The Windows side of folder access, which works anywhere: read, save, explain."""
+
+    def test_all_fine(self):
+        from rplmaker import access
+        with tempfile.TemporaryDirectory() as d:
+            os.mkdir(os.path.join(d, "presets"))
+            r = access.check([os.path.join(d, "presets"), os.path.join(d, "not there")], os.path.join(d, "out"),
+                             protection=lambda: None)
+            self.assertFalse(r.problems)
+            self.assertEqual(r.readable, 1)       # a usual place that isn't there is no problem
+            self.assertEqual(os.listdir(os.path.join(d, "out")), [])   # the test file is gone
+            self.assertIn("read 1 of 1 preset folders.", r.summary())
+
+    def test_problems_named_and_explained(self):
+        from rplmaker import access
+        with tempfile.TemporaryDirectory() as d:
+            blocker = os.path.join(d, "a file")
+            with open(blocker, "w") as f:
+                f.write("x")
+            extra = os.path.join(d, "my presets")
+            r = access.check([blocker], os.path.join(blocker, "out"), required=[extra], protection=lambda: "on")
+            self.assertTrue(r.problems)
+            self.assertFalse(r.can_save)
+            names = [n for n, _ in r.unreadable]
+            self.assertEqual(names, [blocker, extra])
+            text = r.details(os.path.join(blocker, "out"))
+            self.assertIn("ransomware protection", text)
+            self.assertIn("Allow an app through Controlled folder access", text)
+            self.assertIn(extra + ": it isn't there", text)
+
+    def test_protection_on_but_saving_works(self):
+        from rplmaker import access
+        with tempfile.TemporaryDirectory() as d:
+            r = access.check([], d, protection=lambda: "on")
+            self.assertFalse(r.problems)
+            self.assertIn("nothing needs changing", r.details(d))
+
+    def test_protection_read_never_raises(self):
+        from rplmaker import access
+        self.assertIn(access.ransomware_protection(), (None, "on", "off", "audit"))

@@ -16,9 +16,14 @@ import time
 
 import wx
 
-from . import APP_NAME, VERSION, formats, inventory, pipeline, portable, settings, sounds, speech, updates
+from . import APP_NAME, VERSION, access, formats, inventory, pipeline, portable, settings, sounds, speech, updates
 
 CMD = "Command" if sys.platform == "darwin" else "Control"
+WIN = sys.platform == "win32"
+# Folder access, the same on both systems (Matthew: "everyone has the same stuff"): on a Mac,
+# macOS's questions asked ahead of time; on Windows, every folder really read and the
+# libraries folder really written to, with ransomware protection explained.
+ACCESS_VERB = "Check" if WIN else "Allow"
 COMPUTER = "Mac" if sys.platform == "darwin" else "computer"
 
 
@@ -290,9 +295,9 @@ class MainFrame(wx.Frame):
         self.mi_stop = m.Append(wx.ID_ANY, "Stop\tCtrl+.", "Stop now; libraries already made are kept")
         m.AppendSeparator()
         mi_scan = m.Append(wx.ID_ANY, "Look for Presets Again\tCtrl+R", "Look for plug-ins and presets again")
-        self.mi_access = (m.Append(wx.ID_ANY, "Allow Folder Access...",
-                                   "Let macOS ask now whether the checking copy may open your folders")
-                          if sys.platform == "darwin" else None)   # Windows never asks
+        self.mi_access = m.Append(wx.ID_ANY, f"{ACCESS_VERB} Folder Access...",
+                                  "Check that every preset folder can be read and libraries can be saved"
+                                  if WIN else "Let macOS ask now whether the checking copy may open your folders")
         mi_folder = m.Append(wx.ID_ANY, "Show Libraries in " + ("File Explorer" if sys.platform == "win32" else "Finder")
                              + "\tCtrl+Shift+F", "Open the libraries folder")
         mi_report = m.Append(wx.ID_ANY, "Open Report\tCtrl+Shift+R", "Open the last run's report")
@@ -451,7 +456,7 @@ class MainFrame(wx.Frame):
     def scan(self):
         if self.busy:
             say({"build": "Libraries are being made. Look for presets again when the run is done.",
-                 "access": "The checking copy is opening your folders. Look for presets again when that's done."}
+                 "access": "Folder access is being checked. Look for presets again when that's done."}
                 .get(self.busy, "Already looking for presets."), polite=False)
             return
         self.busy = "scan"
@@ -648,11 +653,14 @@ class MainFrame(wx.Frame):
         """Once ever, on a Mac, before the first run: let the person choose whether macOS asks
         about their folders now or only if a plug-in needs one (Matthew, 2026-11-15: "the
         user should decide"). True when access was started; the run follows when it's done."""
-        if sys.platform != "darwin" or self.cfg.get("access_asked") or not portable.protected_folders():
+        if self.cfg.get("access_asked") or not (WIN or portable.protected_folders()):
             return False
         self.remember_access_asked()
-        dlg = wx.MessageDialog(self, FIRST_ACCESS_WORDS, "Allow Folder Access?", wx.OK | wx.CANCEL)
-        dlg.SetOKCancelLabels("Allow Folder Access Now", "Not Now")   # Return allows, Escape is Not Now
+        dlg = wx.MessageDialog(self, FIRST_ACCESS_WORDS_WIN if WIN else FIRST_ACCESS_WORDS,
+                               f"{ACCESS_VERB} Folder Access?", wx.OK | wx.CANCEL)
+        # Return is the first choice, Escape is Not Now (Windows gives Escape to the Cancel
+        # button whatever it's called; the Mac only to one called Cancel, hence escape_presses)
+        dlg.SetOKCancelLabels(f"{ACCESS_VERB} Folder Access Now", "Not Now")
         escape_presses("Not Now")
         go = dlg.ShowModal() == wx.ID_OK
         dlg.Destroy()
@@ -669,9 +677,12 @@ class MainFrame(wx.Frame):
         if self.busy:
             return
         if confirm:
-            folders = portable.protected_folders()
-            dlg = wx.MessageDialog(self, ACCESS_WORDS + "\n\nPlaces: " + ", ".join(os.path.basename(f) or f for f in folders),
-                                   "Allow Folder Access", wx.OK | wx.CANCEL)
+            if WIN:
+                text = ACCESS_WORDS_WIN
+            else:
+                folders = portable.protected_folders()
+                text = ACCESS_WORDS + "\n\nPlaces: " + ", ".join(os.path.basename(f) or f for f in folders)
+            dlg = wx.MessageDialog(self, text, f"{ACCESS_VERB} Folder Access", wx.OK | wx.CANCEL)
             dlg.SetOKCancelLabels("Start", "Cancel")
             go = dlg.ShowModal() == wx.ID_OK
             dlg.Destroy()
@@ -680,6 +691,9 @@ class MainFrame(wx.Frame):
             self.remember_access_asked()   # done by hand: the first run needn't ask
         self.busy = "access"
         self._enable()
+        if WIN:
+            self._check_access_windows(then)
+            return
 
         def work():
             try:
@@ -696,6 +710,45 @@ class MainFrame(wx.Frame):
                 after = None
             wx.CallAfter(self.access_done, words, after)
         threading.Thread(target=work, daemon=True).start()
+
+    def access_folders(self) -> tuple[list[str], list[str]]:
+        """(every folder presets were found in, plus the usual places), (the person's own extra
+        folders, which must be there)."""
+        found = {os.path.dirname(f.path) for p in self.plugs for fs in p.presets.values() for f in fs}
+        return list(inventory.SEARCH_ROOTS) + sorted(found), list(self.cfg.get("extra_folders", []))
+
+    def _check_access_windows(self, then):
+        folders, extra = self.access_folders()
+        out = os.path.expanduser(self.cfg["out_dir"])
+
+        def work():
+            try:
+                rep = access.check(folders, out, required=extra)
+            except Exception as ex:  # noqa: BLE001
+                wx.CallAfter(self.access_done, "Couldn't finish: " + str(ex), None)
+                return
+            wx.CallAfter(self.windows_access_done, rep, out, then)
+        self.set_progress(f"Reading {plural(len(folders) + len(extra), 'folder')} and saving a test file.", None)
+        threading.Thread(target=work, daemon=True).start()
+
+    def windows_access_done(self, rep, out, then):
+        if not self:
+            return
+        words = rep.summary()
+        if not rep.problems:
+            self.access_done(words, then)
+            return
+        self.busy = None
+        self._enable()
+        self.set_progress(words, 1)
+        # the details are long (steps, folder names): a window that can be read line by line
+        self.message(f"{ACCESS_VERB} Folder Access", rep.details(out))
+        if then and rep.can_save:
+            say("Now making your libraries.", polite=False)
+            wx.CallLater(1500, then)
+        elif then:
+            say("Libraries can't be saved yet, so nothing was started. Make Libraries starts the run "
+                "when that's fixed.", polite=False)
 
     def access_done(self, words, then=None):
         if not self:   # the window was closed while work finished in the background
@@ -900,6 +953,17 @@ FIRST_ACCESS_WORDS = ("macOS asks before a new app opens your Documents folder, 
                       "together while you're here (choose Allow for each), then makes your libraries. Not Now "
                       "starts making them straight away. Either way this isn't asked again; File, Allow "
                       "Folder Access does it any time.")
+
+FIRST_ACCESS_WORDS_WIN = ("Windows doesn't ask about folders the way a Mac does, but a preset folder can be "
+                          "out of reach, and Windows Security's ransomware protection can stop new apps "
+                          "saving in Documents, so it's worth checking once.\n\nCheck Folder Access Now "
+                          "reads every preset folder and saves a test file in your libraries folder, says "
+                          "what it found and how to fix anything, then makes your libraries. Not Now starts "
+                          "making them straight away. Either way this isn't asked again; File, Check Folder "
+                          "Access does it any time.")
+ACCESS_WORDS_WIN = ("Start reads every folder presets are kept in and saves a test file in your libraries "
+                    "folder (then removes it). If something can't be read or saved, it says which and how to "
+                    "fix it, including Windows Security's ransomware protection. Nothing else is changed.")
 
 HOW_CHECKED = """Each plug-in is loaded in a separate copy of REAPER, hidden and silent, made from your REAPER. Your own REAPER, its settings and its presets are never touched.
 

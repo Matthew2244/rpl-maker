@@ -41,16 +41,22 @@ def main(argv=None) -> int:
                         f"(now: {cfg['split_over'] if cfg['split_big'] else 0})")
     b.add_argument("--folder", action="append", default=[], help="another folder to look in for presets")
     sub.add_parser("checker", help="make or remake the checking copy of REAPER")
-    sub.add_parser("access", help="let macOS ask, now, whether the checking copy may open your folders and drives")
+    sub.add_parser("access", help="Mac: let macOS ask, now, whether the checking copy may open your folders and "
+                   "drives. Windows: check every preset folder can be read and libraries can be saved")
     args = ap.parse_args(argv)
 
     if args.cmd == "checker":
         portable.make(progress=print)
         return 0
     if args.cmd == "access":
-        if portable.WIN:
-            print("Windows doesn't ask about folders, so there's nothing to allow.")
-            return 0
+        if portable.WIN:   # the Windows counterpart: read every folder, save a test file
+            from . import access
+            plugs = _scan(cfg["extra_folders"])
+            found = {os.path.dirname(f.path) for p in plugs for fs in p.presets.values() for f in fs}
+            out = os.path.expanduser(cfg["out_dir"])
+            rep = access.check(list(inventory.SEARCH_ROOTS) + sorted(found), out, required=cfg["extra_folders"])
+            print(rep.details(out))
+            return 0 if not rep.problems else 3   # 3: problems found (1 would read as a crash)
         if portable.status() != "ready":
             portable.make(progress=print)
         print("macOS may ask, once per place, whether REAPER for checking presets can open files there. Choose Allow.")

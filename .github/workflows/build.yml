@@ -47,6 +47,10 @@ jobs:
           $t = Start-Process "$app\Magpie.exe" -ArgumentList '--self-test' -Wait -PassThru -RedirectStandardOutput selftest.txt
           Get-Content selftest.txt
           if ($t.ExitCode -ne 0) { throw "installed self-test failed" }
+          $c = Start-Process "$app\Magpie.exe" -ArgumentList 'access' -Wait -PassThru -RedirectStandardOutput access.txt
+          Get-Content access.txt
+          if ($c.ExitCode -ne 0 -and $c.ExitCode -ne 3) { throw "Check Folder Access crashed (exit $($c.ExitCode))" }
+          if (-not (Select-String -Path access.txt -Pattern "preset folders" -Quiet)) { throw "Check Folder Access said nothing" }
           $u = Get-ChildItem "$app\unins*.exe" | Select-Object -First 1
           $p = Start-Process $u.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
           Start-Sleep -Seconds 3

@@ -492,8 +492,10 @@ class Builder:
                     f.write("")
                 os.remove(probe)
             except OSError:
-                raise portable.CheckerError(f"Libraries can't be saved in {self.outdir}: that folder can't be "
-                                            "written to. Choose another in Settings.")
+                from . import access
+                raise portable.CheckerError(
+                    f"Libraries can't be saved in {self.outdir}: that folder can't be written to. "
+                    + (access.CFA_STEPS if access.ransomware_protection() == "on" else "Choose another in Settings."))
             return self._build(plugs)
         finally:
             lock.close()

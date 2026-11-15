@@ -57,7 +57,12 @@ The presets are now in the plug-in's preset list on every track. Each library st
 - **Mac:** some plug-ins look through your Documents folder or other drives as they load.
   The first time the checking copy of REAPER does that, macOS asks whether "REAPER for
   checking presets" may open files there, and checking waits until you answer. File, Allow
-  Folder Access asks about all of those places at once, before you start.
+  Folder Access asks about all of those places at once, before you start. The first time you
+  make libraries, Magpie offers to do that, once.
+- **Windows:** Windows Security's ransomware protection can stop new apps saving in
+  Documents. File, Check Folder Access reads every preset folder, saves a test file where
+  libraries go, and says how to fix anything it finds, including how to allow Magpie. The
+  first time you make libraries, Magpie offers to do that, once.
 - A plug-in that needs activating, or shows a window as it loads, can't be checked. It's
   reported, and the run carries on with the next one.
 - Some presets can't be made into REAPER presets, because the plug-in keeps them in a form

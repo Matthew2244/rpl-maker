@@ -206,6 +206,11 @@ Updates are still protected: WinSparkle checks the EdDSA signature first.
 
 ## House rules (from Wavelength)
 
+**Mac and Windows get the same things (Matthew, 2026-11-15: "you gotta make sure everyone has
+the same stuff").** Anything a Mac user gets, a Windows user gets the equivalent of, in the same
+release. When the Mac feature can't exist on Windows, build what does the same job there
+(folder access below is the model), and record here anything that can't be made equal and why.
+
 Native controls; every control has a spoken name and a help tag (`check.sh` counts them);
 controls are made label first, because VoiceOver reads a Mac window in creation order; rows
 say their status first; nothing talks on a timer; finishes and failures are spoken, politely
@@ -262,6 +267,19 @@ busy); nobody on Windows had got that far, which says how untested it is.
    "Not Now" from a wx timer inside the alert's modal loop (wx timers run in the common run
    loop modes); checked on an unshown NSAlert, not yet by ear. `tools/drive.py` sets
    `access_asked` so a test never puts that alert on the screen.
+   **Windows, since 0.1.4 (parity):** the same one-time question, "Check Folder Access?"
+   (Check Folder Access Now / Not Now; Windows gives Escape to the Cancel button whatever its
+   label), and File, Check Folder Access. Windows asks nothing ahead of time, so "check"
+   means `access.check`: list every folder presets were found in, the usual places and the
+   person's extra folders (those must exist), save and remove a test file in the libraries
+   folder, and read Controlled Folder Access ("ransomware protection") from the registry
+   (policy key first; 1 or 3 on, 2 or 4 audit; unreadable is None, never an error; not
+   Get-MpPreference, which is a slow PowerShell start). Problems go in a message window that
+   reads line by line: each folder by name, and the Windows Security steps to allow Magpie
+   when a save fails with protection on. The run starts after it only if libraries can be
+   saved. The libraries folder and the VST3 Presets search use the real Documents
+   (SHGetKnownFolderPath; OneDrive moves it). A failed save at the start of a run also gives
+   those steps when protection is on. `rplmaker access` does the same from the command line.
    **Never tested with someone answering Allow.** Don't use those plug-ins in automated tests:
    the questions appear on the screen of whoever is at the Mac.
 2. **REAPER's first-run audio question stops the copy before any script runs**, unless
