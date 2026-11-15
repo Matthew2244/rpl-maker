@@ -876,7 +876,7 @@ class SettingsDialog(wx.Dialog):
 
         self.speak = wx.CheckBox(self, label="Say each plug-in's result as it finishes")
         self.speak.SetValue(bool(cfg.get("speak", True)))
-        self.speak.SetToolTip("VoiceOver says each library's result when it's done, without moving you. "
+        self.speak.SetToolTip(("Your screen reader says" if WIN else "VoiceOver says") + " each library's result when it's done, without moving you. "
                               "The end of a run is always said.")
         s.Add(self.speak, 0, wx.ALL, 8)
 
