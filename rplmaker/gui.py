@@ -16,9 +16,8 @@ import time
 
 import wx
 
-from . import APP_NAME, VERSION, access, formats, inventory, pipeline, portable, settings, sounds, speech, updates
+from . import APP_NAME, VERSION, access, formats, inreaper, inventory, keys, pipeline, portable, settings, sounds, speech, updates
 
-CMD = "Command" if sys.platform == "darwin" else "Control"
 WIN = sys.platform == "win32"
 # Folder access, the same on both systems (Matthew: "everyone has the same stuff"): on a Mac,
 # macOS's questions asked ahead of time; on Windows, every folder really read and the
@@ -46,7 +45,9 @@ def row_words(p: inventory.Plugin, result: pipeline.Result | None) -> str:
     fmt, found = p.best()
     if not found:
         return f"{p.name}, {p.vendor}: no preset files found"
-    return (f"{p.name}, {p.vendor}: {len(found)} {formats.SHORT_WORDS[fmt]} preset{'' if len(found) == 1 else 's'}"
+    done = inreaper.done_of(p)
+    return ((inreaper.status_words(done) + ": " if done else "")
+            + f"{p.name}, {p.vendor}: {len(found)} {formats.SHORT_WORDS[fmt]} preset{'' if len(found) == 1 else 's'}"
             + ("" if formats.exact_copies(fmt, found) else ", worth a try"))
 
 
@@ -54,6 +55,7 @@ def details_words(p: inventory.Plugin, result: pipeline.Result | None) -> str:
     L = [f"{p.name}", f"Made by {p.vendor or 'an unknown maker'}. REAPER calls it {p.fx}."]
     fmt, found = p.best()
     if found:
+        L += inreaper.detail_lines(p.in_reaper)   # near the top: it decides whether to make it at all
         folders = sorted({os.path.dirname(f.path) for f in found})
         L.append(f"{plural(len(found), 'preset file')} found, {formats.FORMAT_WORDS[fmt]}, "
                  f"in {plural(len(folders), 'folder')}:")
@@ -142,7 +144,7 @@ class MainFrame(wx.Frame):
         row.Add(col, 0, wx.ALL, 6)
         speech.label(self.find, "Find")
         self.find.SetToolTip("Type part of a plug-in's or maker's name to show only those. "
-                             f"{CMD}-F comes here from anywhere in the window.")
+                             f"{keys.say('find')} comes here from anywhere in the window.")
         sl = make_label(panel, "Show:")
         self.show = wx.Choice(panel, choices=["Plug-ins with presets", "Every plug-in", "Checked plug-ins",
                                               "Made, or tried, this time"])
@@ -181,9 +183,9 @@ class MainFrame(wx.Frame):
         brow = wx.BoxSizer(wx.HORIZONTAL)
         self.b_make = wx.Button(panel, label="Make Libraries")
         self.b_make.SetToolTip(f"Makes a library for every checked plug-in and checks each preset in a separate "
-                               f"copy of REAPER ({CMD}-B). Your own REAPER and its presets aren't touched.")
+                               f"copy of REAPER ({keys.say('make')}). Your own REAPER and its presets aren't touched.")
         self.b_stop = wx.Button(panel, label="Stop")
-        self.b_stop.SetToolTip(f"Stops now ({CMD}-period). Libraries already made are kept; the plug-in being "
+        self.b_stop.SetToolTip(f"Stops now ({keys.say('stop')}). Libraries already made are kept; the plug-in being "
                                "checked is left unfinished, and the report says which were never started.")
         self.b_all = wx.Button(panel, label="Check All Shown")
         self.b_all.SetToolTip("Checks every plug-in the list is showing now.")
@@ -204,7 +206,7 @@ class MainFrame(wx.Frame):
         s.Add(self.status, 0, wx.ALL | wx.EXPAND, 8)
         self.gauge = wx.Gauge(panel, range=100)
         speech.label(self.gauge, "Progress")
-        self.gauge.SetToolTip(f"How far the current job has got. {CMD}-P says what's happening now.")
+        self.gauge.SetToolTip(f"How far the current job has got. {keys.say('say_progress')} says what's happening now.")
         s.Add(self.gauge, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         panel.SetSizer(s)
         speech.windows_help_tags(panel)
@@ -222,6 +224,7 @@ class MainFrame(wx.Frame):
         self.b_report.Bind(wx.EVT_BUTTON, lambda e: self.on_report())
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.checked: set[str] = set(self.cfg.get("checked", []))
+        self.anyway: set[str] = set(self.cfg.get("checked_anyway", []))   # checked though in REAPER
         self._enable()
         self.Centre()
         wx.CallAfter(self.scan)
@@ -289,39 +292,50 @@ class MainFrame(wx.Frame):
 
     # -- menus: every shortcut means one thing ----------------------------------------------
     def _menus(self):
+        K = keys.SHORTCUTS
         mb = wx.MenuBar()
         m = wx.Menu()
-        self.mi_make = m.Append(wx.ID_ANY, "Make Libraries\tCtrl+B", "Make libraries for the checked plug-ins")
-        self.mi_stop = m.Append(wx.ID_ANY, "Stop\tCtrl+.", "Stop now; libraries already made are kept")
+        self.mi_make = m.Append(wx.ID_ANY, "Make Libraries\t" + K["make"], "Make libraries for the checked plug-ins")
+        self.mi_stop = m.Append(wx.ID_ANY, "Stop\t" + K["stop"], "Stop now; libraries already made are kept")
         m.AppendSeparator()
-        mi_scan = m.Append(wx.ID_ANY, "Look for Presets Again\tCtrl+R", "Look for plug-ins and presets again")
+        mi_scan = m.Append(wx.ID_ANY, "Look for Presets Again\t" + K["scan"], "Look for plug-ins and presets again")
         self.mi_access = m.Append(wx.ID_ANY, f"{ACCESS_VERB} Folder Access...",
                                   "Check that every preset folder can be read and libraries can be saved"
                                   if WIN else "Let macOS ask now whether the checking copy may open your folders")
         mi_folder = m.Append(wx.ID_ANY, "Show Libraries in " + ("File Explorer" if sys.platform == "win32" else "Finder")
-                             + "\tCtrl+Shift+F", "Open the libraries folder")
-        mi_report = m.Append(wx.ID_ANY, "Open Report\tCtrl+Shift+R", "Open the last run's report")
+                             + "\t" + K["folder"], "Open the libraries folder")
+        mi_report = m.Append(wx.ID_ANY, "Open Report\t" + K["report"], "Open the last run's report")
         m.AppendSeparator()
-        mi_set = m.Append(wx.ID_PREFERENCES, "Settings...\tCtrl+,", "Settings")
-        mi_quit = m.Append(wx.ID_EXIT, "Quit\tCtrl+Q", "Quit")
+        mi_set = m.Append(wx.ID_PREFERENCES, "Preferences...\t" + K["preferences"], "Preferences")
+        mi_quit = m.Append(wx.ID_EXIT, "Quit\t" + K["quit"], "Quit")
         mb.Append(m, "&File")
         e = wx.Menu()
-        mi_all = e.Append(wx.ID_ANY, "Check All Shown\tCtrl+Shift+A", "Check every plug-in shown")
-        mi_none = e.Append(wx.ID_ANY, "Uncheck All\tCtrl+Shift+U", "Uncheck every plug-in")
+        mi_all = e.Append(wx.ID_ANY, "Check All Shown\t" + K["check_all"], "Check every plug-in shown")
+        mi_none = e.Append(wx.ID_ANY, "Uncheck All\t" + K["uncheck_all"], "Uncheck every plug-in")
         mb.Append(e, "&Edit")
         v = wx.Menu()
-        mi_find = v.Append(wx.ID_ANY, "Find\tCtrl+F", "Go to the Find field")
-        mi_list = v.Append(wx.ID_ANY, "Go to the List\tCtrl+L", "Go to the plug-in list")
-        mi_prog = v.Append(wx.ID_ANY, "Say Progress\tCtrl+P", "Say what's happening now")
+        mi_find = v.Append(wx.ID_ANY, "Find\t" + K["find"], "Go to the Find field")
+        mi_list = v.Append(wx.ID_ANY, "Go to the List\t" + K["list"], "Go to the plug-in list")
+        mi_prog = v.Append(wx.ID_ANY, "Say Progress\t" + K["say_progress"], "Say what's happening now")
         mb.Append(v, "&View")
         h = wx.Menu()
         mi_imp = h.Append(wx.ID_ANY, "How to Import a Library", "How to use a library in REAPER")
         mi_how = h.Append(wx.ID_ANY, "How Presets Are Checked", "What makes a preset pass")
         h.AppendSeparator()
-        mi_upd = h.Append(wx.ID_ANY, "Check for Updates...\tCtrl+U", "See whether a newer version is out")
+        mi_upd = h.Append(wx.ID_ANY, "Check for Updates...\t" + K["updates"], "See whether a newer version is out")
         mi_about = h.Append(wx.ID_ABOUT, f"About {APP_NAME}", "About")
         mb.Append(h, "&Help")
         self.SetMenuBar(mb)
+        # the keys that also work without showing in a menu (keys.ALSO): Command+Comma, where
+        # every Mac app keeps its preferences, and Control+Comma, Magpie's own before 0.1.6
+        ids = {"preferences": mi_set.GetId()}
+        entries = []
+        for name, extra in keys.ALSO.items():
+            for accel in extra:
+                entry = wx.AcceleratorEntry(cmd=ids[name])
+                if entry.FromString(accel):
+                    entries.append(entry)
+        self.SetAcceleratorTable(wx.AcceleratorTable(entries))
         B = self.Bind
         B(wx.EVT_MENU, lambda e: self.on_make(), self.mi_make)
         B(wx.EVT_MENU, lambda e: self.on_stop(), self.mi_stop)
@@ -432,8 +446,11 @@ class MainFrame(wx.Frame):
         p = self.shown[i]
         if self.list.IsChecked(i):
             self.checked.add(p.class_id)
+            if inreaper.done_of(p):
+                self.anyway.add(p.class_id)   # checked knowing it's in REAPER: stays checked
         else:
             self.checked.discard(p.class_id)
+            self.anyway.discard(p.class_id)
         speech.row_changed(self.list, i)
         self.count_words()
         # VoiceOver can read the row before the check lands; say the new count instead (not
@@ -441,17 +458,22 @@ class MainFrame(wx.Frame):
         say(self.checked_words(), polite=True)
 
     def set_all(self, on: bool):
+        left = 0
         if on:
             for i, p in enumerate(self.shown):
-                if p.count:
+                if p.count and inreaper.done_of(p) and p.class_id not in self.checked:
+                    left += 1      # already in REAPER: only checked one at a time, on purpose
+                elif p.count:
                     self.checked.add(p.class_id)
                     self.list.Check(i)
         else:
             self.checked.clear()
+            self.anyway.clear()
             for i in range(len(self.shown)):
                 self.list.Check(i, False)
         self.count_words()
-        say(self.count.GetLabel(), polite=False)
+        say(self.count.GetLabel() + (f" {plural(left, 'plug-in')} already in REAPER left unchecked; "
+                                     "check one with Space to make it anyway." if left else ""), polite=False)
 
     # -- scanning ----------------------------------------------------------------------------
     def scan(self):
@@ -485,6 +507,9 @@ class MainFrame(wx.Frame):
         self.plugs = plugs
         known = {p.class_id for p in plugs}
         self.checked &= known
+        # already in REAPER means unchecked, unless it was checked by hand knowing that
+        in_reaper = sum(1 for p in plugs if p.count and inreaper.done_of(p))
+        self.checked -= {p.class_id for p in plugs if inreaper.done_of(p) and p.class_id not in self.anyway}
         with_presets = sum(1 for p in plugs if p.count)
         first = not self.scanned_once
         self.scanned_once = True
@@ -499,10 +524,13 @@ class MainFrame(wx.Frame):
                      "so it can scan them, then Look for Presets Again.")
         elif not with_presets:
             words = (f"None of your {plural(len(plugs), 'VST3 plug-in')} has preset files this can read in the "
-                     "usual places. If a maker keeps presets somewhere else, add that folder in Settings.")
+                     "usual places. If a maker keeps presets somewhere else, add that folder in Preferences.")
         else:
             words = (f"Found {plural(with_presets, 'plug-in')} with presets this can read, "
                      f"of {plural(len(plugs), 'VST3 plug-in')}.")
+            if in_reaper:
+                words += (f" {in_reaper} of them {'is' if in_reaper == 1 else 'are'} already in REAPER's own "
+                          "presets, so left unchecked.")
         self.set_progress(words, 1)
         self.refill()
         if first and self.shown and wx.Window.FindFocus() in (None, self.find):
@@ -539,7 +567,7 @@ class MainFrame(wx.Frame):
         self.stop_flag = False
         self._enable()
         self.cfg["checked"] = sorted(self.checked)
-        settings.save({"checked": self.cfg["checked"]})
+        settings.save({"checked": self.cfg["checked"], "checked_anyway": sorted(self.anyway & self.checked)})
         total = sum(p.count + 1 for p in chosen)
         done_before = [0]
         current = [""]
@@ -785,7 +813,7 @@ class MainFrame(wx.Frame):
             say("There's no report yet. One is written at the end of each run.", polite=False)
 
     def on_settings(self):
-        dlg = SettingsDialog(self, self.cfg)
+        dlg = PreferencesDialog(self, self.cfg)
         if dlg.ShowModal() == wx.ID_OK:
             old_folders = list(self.cfg.get("extra_folders", []))
             self.cfg.update(dlg.values())
@@ -808,14 +836,14 @@ class MainFrame(wx.Frame):
             self.stop_flag = True
             if self.builder:
                 self.builder.abort()   # ends the checking copy for good; the run's thread can't restart it
-        settings.save({"checked": sorted(self.checked)})
+        settings.save({"checked": sorted(self.checked), "checked_anyway": sorted(self.anyway & self.checked)})
         updates.cleanup()
         e.Skip()
 
 
-class SettingsDialog(wx.Dialog):
+class PreferencesDialog(wx.Dialog):
     def __init__(self, parent, cfg):
-        super().__init__(parent, title="Settings", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        super().__init__(parent, title="Preferences", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         s = wx.BoxSizer(wx.VERTICAL)
 
         def stacked(label, ctrl, tip, grow=False):
@@ -899,7 +927,7 @@ class SettingsDialog(wx.Dialog):
 
         btns = wx.StdDialogButtonSizer()
         ok = wx.Button(self, wx.ID_OK, "Save")
-        ok.SetToolTip("Keeps these settings.")
+        ok.SetToolTip("Keeps these preferences.")
         cancel = wx.Button(self, wx.ID_CANCEL, "Cancel")
         cancel.SetToolTip("Closes without changing anything (Escape).")
         btns.AddButton(ok)

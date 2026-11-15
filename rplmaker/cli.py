@@ -13,7 +13,7 @@ import argparse
 import os
 import sys
 
-from . import APP_NAME, formats, inventory, pipeline, portable, settings
+from . import APP_NAME, formats, inreaper, inventory, pipeline, portable, settings
 
 
 def _scan(folders):
@@ -68,8 +68,10 @@ def main(argv=None) -> int:
         shown = [p for p in plugs if p.count or args.all]
         for p in shown:
             fmt, f = p.best()
-            print(f"{p.name} ({p.vendor}): {len(f)} {formats.FORMAT_WORDS.get(fmt, 'no preset files')}" if f else
-                  f"{p.name} ({p.vendor}): no preset files found")
+            done = inreaper.done_of(p)
+            print((inreaper.status_words(done) + ": " if done and f else "")
+                  + (f"{p.name} ({p.vendor}): {len(f)} {formats.FORMAT_WORDS.get(fmt, 'no preset files')}" if f else
+                     f"{p.name} ({p.vendor}): no preset files found"))
         print(f"{sum(1 for p in plugs if p.count)} of {len(plugs)} plug-ins have preset files this can read.")
         return 0
     chosen = []

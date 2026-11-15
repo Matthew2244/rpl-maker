@@ -56,7 +56,7 @@ DOCUMENTS = documents()
 REAPER_RESOURCE = (os.path.join(APPDATA, "REAPER") if WIN
                    else os.path.join(HOME, "Library", "Application Support", "REAPER"))
 
-# Where vendors put factory presets. Extra folders come from Settings.
+# Where vendors put factory presets. Extra folders come from Preferences.
 if WIN:
     _pf = os.environ.get("ProgramFiles", r"C:\Program Files")
     _pd = os.environ.get("ProgramData", r"C:\ProgramData")
@@ -95,6 +95,7 @@ class Plugin:
     bundle: str              # file name in REAPER's cache, e.g. Ozone_12_Equalizer.vst3
     instrument: bool
     presets: dict = field(default_factory=dict)   # format -> [Found]
+    in_reaper: object = None   # inreaper.InReaper: REAPER's own presets file for it, if any
 
     @property
     def vst2(self) -> str | None:
@@ -316,4 +317,6 @@ def scan(extra_roots: list[str] | None = None, resource: str = REAPER_RESOURCE, 
     roots = SEARCH_ROOTS + [r for r in (extra_roots or []) if r]
     files = find_files(roots, (lambda n, d: progress("looking", n, d)) if progress else None, stop)
     match(plugs, files, (lambda k, n: progress("reading", k, n)) if progress else None, stop)
+    from . import inreaper   # here, not at the top: it reads this module's helpers
+    inreaper.mark(plugs, resource)
     return plugs

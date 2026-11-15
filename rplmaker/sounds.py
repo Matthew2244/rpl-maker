@@ -10,7 +10,7 @@ Files: assets/sounds/<event>.mp3 (Mac, afplay) and .wav (Windows, winsound), mad
 tools/finish_sounds.py. Rules: sounds never overlap (a second waits for the first to end);
 library_made plays at most every 2 seconds, so a run of small libraries isn't a drum roll;
 and `play` returns when its sound will be over, so the window can say its sentence after
-it, never on top of it. Settings, Play sounds turns them off. A missing file is silence,
+it, never on top of it. Preferences, Play sounds turns them off. A missing file is silence,
 never an error.
 """
 from __future__ import annotations

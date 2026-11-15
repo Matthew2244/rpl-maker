@@ -48,24 +48,33 @@ def main() -> int:
         print(f"help tag: {got[:50]!r}")
         if not got.startswith(want):
             problems.append(f"{ctrl.GetLabel() or 'the list'} has no help tag for screen readers ({got!r})")
-    dlg = gui.SettingsDialog(f, f.cfg)
+    dlg = gui.PreferencesDialog(f, f.cfg)
     for ctrl, want in ((dlg.author, "Your name in file names"), (dlg.twice, None)):
         a = acc_of(ctrl)
-        print(f"Settings: {a.accName(0)!r}, {str(a.accDescription(0) or '')[:40]!r}")
+        print(f"Preferences: {a.accName(0)!r}, {str(a.accDescription(0) or '')[:40]!r}")
         if want and a.accName(0) != want:
-            problems.append(f"Settings field named {a.accName(0)!r}")
+            problems.append(f"Preferences field named {a.accName(0)!r}")
         if not a.accDescription(0):
-            problems.append(f"Settings {a.accName(0)!r} has no help tag for screen readers")
+            problems.append(f"Preferences {a.accName(0)!r} has no help tag for screen readers")
     dlg.Destroy()
     # every shortcut the menus show must be a real key here too (Control on Windows)
     mb = f.GetMenuBar()
+    keys_seen = {}
     for i in range(mb.GetMenuCount()):
         for item in mb.GetMenu(i).GetMenuItems():
             label = item.GetItemLabel()
             if "\t" in label and item.GetAccel() is None:
                 problems.append(f"menu item {label!r} has no working shortcut")
             elif "\t" in label:
-                print(f"shortcut: {label.split(chr(9))[0]!r} -> {item.GetAccel().ToString()}")
+                key = item.GetAccel().ToString()
+                print(f"shortcut: {label.split(chr(9))[0]!r} -> {key}")
+                if key in keys_seen:
+                    problems.append(f"{key} means both {keys_seen[key]!r} and {label!r}")
+                keys_seen[key] = label
+    for want_label, want_key in (("Preferences...", "Ctrl+P"), ("Say Progress", "Ctrl+Shift+Space")):
+        got = [k for k, lab in keys_seen.items() if lab.split("\t")[0] == want_label]
+        if got != [want_key]:
+            problems.append(f"{want_label} has {got}, not {want_key}")
     lst = f.list
     lst.Set(["First, Maker: 12 VST3 presets", "Second, Maker: 3 VST3 presets"])
     speech.check_list(lst, "Plug-ins")

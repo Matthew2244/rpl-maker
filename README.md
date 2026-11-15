@@ -28,10 +28,14 @@ and it works the same way if you don't use one.
    report saying what was made, what was left out and why.
 
 Your own REAPER, its settings and its presets are never changed. The separate copy reads
-two files from your REAPER: its licence and its list of plug-ins.
+from your REAPER its licence, its list of plug-ins, and two things from its settings file:
+the folders it looks for plug-ins in, and its note that you accepted REAPER's licence
+agreement. Magpie also reads your REAPER's presets folder, to notice plug-ins already done.
+The copy uses no sound device on Windows (REAPER's Dummy Audio) and a quiet output-only one
+on a Mac, so it never stops to ask which to use, and nothing is ever heard.
 
 Libraries are saved in a folder called REAPER Preset Libraries in your Documents folder. You
-can choose another folder in Settings.
+can choose another folder in Preferences.
 
 ## What you need
 
@@ -110,8 +114,27 @@ stop new apps saving in Documents.
 Magpie asks whether to Check Folder Access Now. That reads every preset folder and saves a
 test file where libraries go. It names any folder it can't read. If ransomware protection
 stops the save, it says so and gives the steps in Windows Security to allow Magpie, or you
-can choose another folder in Settings. Then your libraries are made. Not Now starts making
+can choose another folder in Preferences. Then your libraries are made. Not Now starts making
 them straight away. File, Check Folder Access does the same thing whenever you like.
+
+## Plug-ins already in REAPER
+
+If you've already put a plug-in's presets into REAPER yourself, by hand or by importing a
+library, Magpie notices. That plug-in's row starts "Already in REAPER", it's left unchecked,
+and Check All Shown skips it. You can still check it with Space and make it anyway. The
+details say what was found.
+
+How it tells: REAPER keeps each plug-in's own presets in a file in its presets folder. Almost
+every plug-in gets one of those as soon as it's used, often holding only a default entry, so a
+file being there means nothing. A plug-in counts as already in REAPER only when that file holds,
+by name, at least half of the preset names Magpie found for it, and at least 3 of them. Entries
+called Default, Init, Untitled or Program 1, and ones with no name, never count. Names are
+compared ignoring capitals, spaces and punctuation. Magpie looks at the plug-in's VST3, VST2,
+AU and CLAP versions; when only another version has them, the row says which, because those
+presets don't load in the VST3 version. It reads the presets folder in REAPER's usual place
+(Mac: Library, Application Support, REAPER; Windows: AppData, Roaming, REAPER), the same place
+it reads REAPER's plug-in list from; a portable REAPER isn't looked at. REAPER's files are only
+read, never changed.
 
 ## Using a library in REAPER
 
@@ -127,7 +150,8 @@ says the same.
 ## Keyboard shortcuts
 
 Everything works from the keyboard. The shortcuts are the same on both systems, with
-Command on a Mac and Control on Windows.
+Command on a Mac and Control on Windows. Two match what REAPER users already know:
+Preferences is REAPER's own Preferences key, and Say Progress is OSARA's Report selection key.
 
 ### On a Mac
 
@@ -136,13 +160,13 @@ Command on a Mac and Control on Windows.
 - Command-R: Look for Presets Again
 - Command-F: go to Find
 - Command-L: go to the plug-in list
-- Command-P: say what's happening now
+- Command-Shift-Space: say what's happening now (OSARA's Report selection key)
 - Command-Shift-A: Check All Shown
 - Command-Shift-U: Uncheck All
 - Command-Shift-F: Show Libraries in Finder
 - Command-Shift-R: Open Report
 - Command-U: Check for Updates
-- Command-Comma: Settings (in the Magpie menu)
+- Command-P: Preferences (in the Magpie menu), as in REAPER. Command-Comma opens them too.
 - Command-Q: Quit (in the Magpie menu)
 - Space, in the plug-in list: check or uncheck the selected plug-in
 
@@ -153,13 +177,13 @@ Command on a Mac and Control on Windows.
 - Control+R: Look for Presets Again
 - Control+F: go to Find
 - Control+L: go to the plug-in list
-- Control+P: say what's happening now
+- Control+Shift+Space: say what's happening now (OSARA's Report selection key)
 - Control+Shift+A: Check All Shown
 - Control+Shift+U: Uncheck All
 - Control+Shift+F: Show Libraries in File Explorer
 - Control+Shift+R: Open Report
 - Control+U: Check for Updates
-- Control+Comma: Settings (in the File menu)
+- Control+P: Preferences (in the File menu), as in REAPER. Control+Comma opens them too.
 - Control+Q: Quit (in the File menu)
 - Space, in the plug-in list: check or uncheck the selected plug-in
 
@@ -175,7 +199,7 @@ found for it.
 Results are spoken as each plug-in finishes, without moving you. The end of a run is always
 spoken. A short sound plays when a library is made, when one can't be made, when a run is
 done, and when checking is waiting on you. What's said comes after the sound, never on top of
-it. Settings has switches for the sounds and for the spoken results.
+it. Preferences has switches for the sounds and for the spoken results.
 
 ### VoiceOver on a Mac
 
@@ -197,11 +221,11 @@ Each control's help tag is read after its name, as its description.
   reported, and the run carries on with the next one.
 - Some presets can't be made into REAPER presets, because the plug-in keeps them in a form
   only it reads. Those are counted in the report as files that couldn't be read.
-- Libraries with fewer than 5 working presets aren't saved. You can change that in Settings.
+- Libraries with fewer than 5 working presets aren't saved. You can change that in Preferences.
 - When a plug-in has more than 300 presets in several folders, each folder becomes its own
-  library. You can turn that off or change the number in Settings.
+  library. You can turn that off or change the number in Preferences.
 - If your presets are somewhere unusual, such as a Native Instruments User Content folder on
-  another drive, add that folder in Settings, under Also look for presets in.
+  another drive, add that folder in Preferences, under Also look for presets in.
 - The report opens in TextEdit on a Mac and Notepad on Windows.
 
 ## Updates

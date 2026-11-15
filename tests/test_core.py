@@ -349,3 +349,131 @@ class WindowsHide(unittest.TestCase):
             self.assertEqual(visible(), [])                    # nothing visible is left
         finally:
             p.kill()
+
+
+class AlreadyInReaper(unittest.TestCase):
+    """REAPER's own presets files (tests/fixtures/reaper), read to notice plug-ins done by hand."""
+    FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "reaper")
+
+    def plug(self, name, names, vendor="Maker Co", bundle=None, cls="0" * 32):
+        p = inventory.Plugin(f"VST3: {name} ({vendor})", name, vendor, cls, bundle or name.replace(" ", "_") + ".vst3", False)
+        p.presets["vstpreset"] = [formats.Found(f"/x/{n}.vstpreset", "vstpreset", n) for n in names]
+        return p
+
+    def resource(self, d):
+        import shutil
+        res = os.path.join(d, "reaper")
+        shutil.copytree(self.FIXTURE, res)
+        if sys.platform != "win32":   # a colon can't be in a Windows file name, and AU is Mac-only anyway
+            for fn, names in (("au-Maker Co: Synth One.ini", ["Drums - Kick Room", "pads/Warm Pad", "LEAD  bright!", "Bass"]),
+                              ("au-Someone Else: Synth Two.ini", ["S 1", "S 2", "S 3", "S 4"])):
+                with open(os.path.join(res, "presets", fn), "w") as f:
+                    f.write(states.ini_text([(n, b"x") for n in names]))
+        return res
+
+    def run_mark(self, plugs):
+        from rplmaker import inreaper
+        with tempfile.TemporaryDirectory() as d:
+            res = self.resource(d)
+            before = {f: os.path.getmtime(os.path.join(res, "presets", f)) for f in os.listdir(os.path.join(res, "presets"))}
+            inreaper.mark(plugs, res)
+            after = {f: os.path.getmtime(os.path.join(res, "presets", f)) for f in os.listdir(os.path.join(res, "presets"))}
+            self.assertEqual(before, after)          # REAPER's files are only ever read
+        return {p.name: p.in_reaper for p in plugs}
+
+    def test_populated_file_counts_as_done(self):
+        from rplmaker import inreaper
+        glue = self.plug("Glue Comp", [f"Glue {i}" for i in range(1, 11)])
+        got = self.run_mark([glue])["Glue Comp"]
+        self.assertTrue(got.done)
+        self.assertEqual((got.file, got.fmt, got.matched, got.of, got.named), ("vst3-Glue_Comp.ini", "vst3", 8, 10, 9))
+        self.assertTrue(inreaper.detail_lines(got)[0].startswith("Already in REAPER: its presets in REAPER, for the VST3"))
+        self.assertEqual(inreaper.status_words(got), "Already in REAPER")
+
+    def test_default_or_blank_entry_is_not_done(self):
+        # almost every plug-in gets a presets file once it's been used, often holding one
+        # Default or blank entry: that's never someone's work
+        r = self.run_mark([self.plug("Surgish", ["default", "Bass 1", "Pad 2", "Lead 3"]),
+                           self.plug("Blanky", ["A", "B", "C"])])
+        self.assertIsNone(r["Surgish"])
+        self.assertIsNone(r["Blanky"])
+
+    def test_a_couple_of_presets_or_under_half_is_not_done(self):
+        from rplmaker import inreaper
+        r = self.run_mark([self.plug("Fewer", ["F 1", "F 2", "F 3"]),
+                           self.plug("Halfway", [f"H {i}" for i in range(1, 11)])])
+        self.assertEqual((r["Fewer"].matched, r["Fewer"].done), (2, False))      # needs at least 3
+        self.assertEqual((r["Halfway"].matched, r["Halfway"].done), (4, False))  # needs 5 of 10
+        self.assertIn("isn't counted as already in REAPER", inreaper.detail_lines(r["Halfway"])[0])
+
+    def test_reapers_factory_cache_never_counts(self):
+        self.assertIsNone(self.run_mark([self.plug("Factory", [f"Fac {i}" for i in range(1, 11)])])["Factory"])
+
+    def test_other_formats_match_by_their_own_names(self):
+        from rplmaker import inreaper
+        two = self.plug("Glue Two", [f"V {i}" for i in range(1, 7)], cls="565354" + "676E6572" + "0" * 18)
+        chorus = self.plug("Chorus", ["C 1", "C 2", "C 3", "C 4"], bundle="Maker_Chorus.vst3")
+        r = self.run_mark([two, chorus])
+        self.assertEqual((r["Glue Two"].fmt, r["Glue Two"].done), ("vst", True))   # VST2, by its unique id
+        self.assertEqual((r["Chorus"].fmt, r["Chorus"].done), ("clap", True))      # CLAP, by REAPER's CLAP list
+        self.assertEqual(inreaper.status_words(r["Chorus"]), "Already in REAPER for the CLAP version")
+        self.assertIn("VST3 version", inreaper.detail_lines(r["Chorus"])[1])
+
+    @unittest.skipIf(sys.platform == "win32", "AU is Mac-only, and its file names hold a colon")
+    def test_au_by_maker_and_name_and_folder_names(self):
+        one = self.plug("Synth One", ["Kick Room", "Warm Pad", "Lead Bright", "Bass"])
+        two = self.plug("Synth Two", ["S 1", "S 2", "S 3", "S 4"])        # same name shape, other maker's file
+        r = self.run_mark([one, two])
+        self.assertEqual((r["Synth One"].fmt, r["Synth One"].matched, r["Synth One"].done), ("au", 4, True))
+        self.assertIsNone(r["Synth Two"])
+
+    def test_identity_rules(self):
+        from rplmaker import inreaper
+        p = self.plug("Synth One", [], bundle="Synth_One_v1.vst3")
+        self.assertTrue(inreaper.is_for(p, "au", "Maker Co: Synth One", {}, {}))
+        self.assertTrue(inreaper.is_for(p, "au", "MAKER CO.: synth-one", {}, {}))
+        self.assertFalse(inreaper.is_for(p, "au", "Someone Else: Synth One", {}, {}))
+        self.assertTrue(inreaper.is_for(p, "vst3", "Synth One v1", {}, {}))      # the bundle's real file name
+        self.assertTrue(inreaper.is_for(p, "vst3", "Synth One", {}, {}))         # or the plug-in's name
+        self.assertFalse(inreaper.is_for(p, "vst3", "Synth One Effects", {}, {}))
+        self.assertFalse(inreaper.is_for(p, "js", "Synth One", {}, {}))
+
+    def test_folder_prefixes_and_dashes_in_names(self):
+        from rplmaker import inreaper
+        keys_ = inreaper.name_keys(["Brainworx - Mix - BA Bus - Gentle", "Default"])
+        for found in ("BA Bus - Gentle", "Mix - BA Bus - Gentle", "Gentle"):
+            self.assertIn(inreaper.key(found), keys_)
+        self.assertNotIn("default", keys_)
+
+    def test_placeholders(self):
+        from rplmaker import inreaper
+        for n in ("Default", "default", "0 Default settings", "", "  ", "Init", "Program 3", "Preset 12", "Untitled 2"):
+            self.assertTrue(inreaper.placeholder(n), n)
+        for n in ("Acoustic Guitar", "Initial Velocity Bass", "Default Room Large", "Glue 1"):
+            self.assertFalse(inreaper.placeholder(n), n)
+
+    def test_never_raises(self):
+        from rplmaker import inreaper
+        p = self.plug("Glue Comp", ["Glue 1"])
+        inreaper.mark([p], "/no/such/folder")
+        self.assertIsNone(p.in_reaper)
+
+
+class Shortcuts(unittest.TestCase):
+    def test_every_key_means_one_thing(self):
+        from rplmaker import keys
+        every = [k.lower() for k in keys.every_key()]
+        self.assertEqual(len(every), len(set(every)), every)
+
+    def test_reapers_and_osaras_keys(self):
+        from rplmaker import keys
+        self.assertEqual(keys.SHORTCUTS["preferences"], "Ctrl+P")            # REAPER's Preferences
+        self.assertEqual(keys.SHORTCUTS["say_progress"], "Ctrl+Shift+Space")  # OSARA's report selection
+        self.assertEqual(keys.ALSO["preferences"], ["Ctrl+,"])
+        self.assertEqual(keys.say("say_progress", mac=True), "Command-Shift-Space")
+        self.assertEqual(keys.say("say_progress", mac=False), "Control+Shift+Space")
+        self.assertEqual(keys.words("Ctrl+.", mac=False), "Control+Period")
+        # none of macOS's own: Control+Space and Control+Option+Space switch input sources,
+        # Command+Space is Spotlight, Command+Option+Space a Finder search
+        for taken in ("RawCtrl+Space", "RawCtrl+Alt+Space", "Ctrl+Space", "Ctrl+Alt+Space"):
+            self.assertNotIn(taken.lower(), [k.lower() for k in keys.every_key()])

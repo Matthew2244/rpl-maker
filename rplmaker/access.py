@@ -24,7 +24,7 @@ CFA_STEPS = (f"Windows Security's ransomware protection is on, and it can stop a
              f"saving in Documents. To let {APP_NAME} save there: open Windows Security, then Virus and threat "
              "protection, then Manage ransomware protection, then Allow an app through Controlled folder "
              f"access, then Add an allowed app, and choose {APP_NAME}. Or choose another folder for libraries "
-             "in Settings.")
+             "in Preferences.")
 
 
 def ransomware_protection() -> str | None:
@@ -74,7 +74,7 @@ class Report:
         if not self.can_save:
             L.append(f"Libraries can't be saved in {outdir}: {self.save_why}.")
             L.append(CFA_STEPS if self.protection == "on" else
-                     "Choose another folder for libraries in Settings, or check that this one exists "
+                     "Choose another folder for libraries in Preferences, or check that this one exists "
                      "and that you can save files in it.")
             L.append("")
         elif self.protection == "on":
