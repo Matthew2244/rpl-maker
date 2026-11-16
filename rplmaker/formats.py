@@ -42,6 +42,7 @@ class Found:
     vst2: str | None = None        # four-character VST2 id, as 8 hex digits
     folder_hint: list[str] = field(default_factory=list)   # folder names, for XML matching
     plugin_name: str | None = None  # what the file says the plug-in is called, if it says
+    category: str | None = None    # the maker's category inside the file (NKS sound type, VST3 instrument)
 
 
 # ---- small binary helpers ---------------------------------------------------------------------
@@ -141,6 +142,45 @@ def nks_meta(chunk: bytes) -> dict:
         return {}
 
 
+def nks_category(meta: dict) -> str | None:
+    """An NKS preset's category: the top level of its first sound type, the one Native
+    Instruments' browsers file it under first ("Bass" from [["Bass", "Bass Line"], ...])."""
+    types = meta.get("types")
+    if isinstance(types, list) and types and isinstance(types[0], list) and types[0]:
+        top = types[0][0]
+        if isinstance(top, str) and top.strip():
+            return top.strip()
+    return None
+
+
+def vstpreset_category(f, head: bytes) -> str | None:
+    """A .vstpreset's category from its MetaInfo chunk (Steinberg's MusicalInstrument or
+    MusicalCategory attribute, top level: "Piano" from "Piano|A. Piano"). Reads only the chunk
+    list and that chunk, never the state."""
+    import re
+    try:
+        lst = struct.unpack("<Q", head[40:48])[0]
+        f.seek(lst)
+        top = f.read(8)
+        if top[:4] != b"List":
+            return None
+        cnt = struct.unpack("<I", top[4:8])[0]
+        entries = f.read(20 * min(cnt, 64))
+        for k in range(0, len(entries) - 19, 20):
+            if entries[k:k + 4] == b"Info":
+                off, size = struct.unpack("<QQ", entries[k + 4:k + 20])
+                f.seek(off)
+                xml = f.read(min(size, 65536)).decode("utf-8", "replace")
+                for attr in ("MusicalInstrument", "MusicalCategory"):
+                    m = re.search(r'id="' + attr + r'"[^>]*?value="([^"]+)"', xml) or \
+                        re.search(r'value="([^"]+)"[^>]*?id="' + attr + '"', xml)
+                    if m and m.group(1).split("|")[0].strip():
+                        return m.group(1).split("|")[0].strip()
+    except (struct.error, OSError, ValueError):
+        pass
+    return None
+
+
 def fourcc_hex(v) -> str | None:
     if isinstance(v, int) and v:
         return f"{v & 0xffffffff:08X}"
@@ -160,16 +200,18 @@ def read(path: str) -> Found | None:
         if fmt == "vstpreset":
             with open(path, "rb") as f:
                 head = f.read(48)
-            if head[:4] != b"VST3":
-                return None
-            return Found(path, fmt, stem, class_id=head[8:40].decode("ascii").upper())
+                if head[:4] != b"VST3":
+                    return None
+                cat = vstpreset_category(f, head)
+            return Found(path, fmt, stem, class_id=head[8:40].decode("ascii").upper(), category=cat)
         if fmt == "nks":
             with open(path, "rb") as f:
                 c = riff(f.read(65536))   # the metadata comes first; the state can be huge
             pc = c.get(b"PCHK", b"")
             plid = nks_meta(c.get(b"PLID", b""))
-            name = nks_meta(c.get(b"NISI", b"")).get("name") or stem
-            fd = Found(path, fmt, str(name), plugin_name=plid.get("pluginName"))
+            nisi = nks_meta(c.get(b"NISI", b""))
+            name = nisi.get("name") or stem
+            fd = Found(path, fmt, str(name), plugin_name=plid.get("pluginName"), category=nks_category(nisi))
             uid = plid.get("VST3.uid")
             if pc[4:8] == b"VST3":
                 fd.class_id = pc[12:44].decode("ascii").upper()

@@ -22,6 +22,7 @@ SHORTCUTS = {
     "scan": "Ctrl+R",
     "folder": "Ctrl+Shift+F",
     "report": "Ctrl+Shift+R",
+    "organize": "Ctrl+Shift+O",
     "preferences": "Ctrl+P",
     "quit": "Ctrl+Q",
     "check_all": "Ctrl+Shift+A",

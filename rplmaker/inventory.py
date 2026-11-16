@@ -27,7 +27,7 @@ APPDATA = os.environ.get("APPDATA") or os.path.join(HOME, "AppData", "Roaming")
 SUPPORT = (os.path.join(APPDATA, "RPL Maker") if WIN
            else os.path.join(HOME, "Library", "Application Support", "RPL Maker"))
 CACHE = os.path.join(SUPPORT, "scan-cache.json")
-CACHE_VERSION = 1
+CACHE_VERSION = 2   # 2: Found carries the maker's category (0.2.0)
 
 
 def documents() -> str:

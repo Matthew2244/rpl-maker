@@ -49,7 +49,8 @@ def main() -> int:
         if not got.startswith(want):
             problems.append(f"{ctrl.GetLabel() or 'the list'} has no help tag for screen readers ({got!r})")
     dlg = gui.PreferencesDialog(f, f.cfg)
-    for ctrl, want in ((dlg.author, "Your name in file names"), (dlg.twice, None)):
+    for ctrl, want in ((dlg.author, "Your name in file names"), (dlg.twice, None), (dlg.prefix, None),
+                       (dlg.layout, "Folders for libraries"), (dlg.per_cat, None)):
         a = acc_of(ctrl)
         print(f"Preferences: {a.accName(0)!r}, {str(a.accDescription(0) or '')[:40]!r}")
         if want and a.accName(0) != want:

@@ -34,6 +34,9 @@ DEFAULTS = {
     "check_twice": True,
     "split_big": True,           # one library per folder for a big set (an ADpak, an instrument)
     "split_over": 300,
+    "prefix_category": True,     # "Category - Name": REAPER shows one flat list, so names keep categories together
+    "per_category": False,       # one library per category, whatever the size
+    "layout": "plugin",          # folders: maker, then plug-in ("maker": the maker only, as before 0.2.0)
     "extra_folders": [],
     "speak": True,
     "sounds": True,

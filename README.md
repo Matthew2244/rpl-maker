@@ -24,8 +24,9 @@ and it works the same way if you don't use one.
 3. Every preset is loaded by name in a separate, hidden copy of REAPER, and the plug-in's own
    saved settings are compared with the preset file. A preset that doesn't come back the same
    is left out. Each finished library is checked a second time.
-4. You get a folder of .RPL files, one per plug-in (or one per folder for big sets), and a
-   report saying what was made, what was left out and why.
+4. You get a folder of .RPL files, one per plug-in (or one per folder or category for big
+   sets), and a report saying what was made, what was left out and why. Preset names start
+   with their maker's category, so they stay grouped in REAPER's list.
 
 Your own REAPER, its settings and its presets are never changed. The separate copy reads
 from your REAPER its licence, its list of plug-ins, and two things from its settings file:
@@ -35,8 +36,9 @@ The copy uses no sound device on Windows (REAPER's Dummy Audio), and on a Mac an
 one that isn't your main one when there is one, so it never stops to ask which to use. It
 mutes itself before loading any plug-in either way.
 
-Libraries are saved in a folder called REAPER Preset Libraries in your Documents folder. You
-can choose another folder in Preferences.
+Libraries are saved in a folder called REAPER Preset Libraries in your Documents folder,
+with a folder for each maker and one for each plug-in inside it. You can choose another
+folder in Preferences.
 
 ## What you need
 
@@ -137,6 +139,69 @@ presets don't load in the VST3 version. It reads the presets folder in REAPER's 
 it reads REAPER's plug-in list from; a portable REAPER isn't looked at. REAPER's files are only
 read, never changed.
 
+## Keeping presets organized
+
+REAPER shows a plug-in's presets as one list, sorted by name. It has no folders or submenus
+for presets, and every library you import for a plug-in goes into that same list. So Magpie
+keeps each category together by its name.
+
+### Categories in preset names
+
+Preferences, Start preset names with their category, is on at first. A preset in the maker's
+Bass category is then called "Bass - Deep Sub", and all the Bass presets sit together in
+REAPER's list, away from "Lead - Saw".
+
+- Categories come only from the plug-in's maker: the folders its presets were installed in,
+  or the category written inside the preset file (Native Instruments NKS presets carry one,
+  and some VST3 presets do). Magpie never guesses a category from the words in a name, so a
+  preset is never put in a category its maker didn't give it.
+- A category the maker put on every preset (all of a plug-in's presets called EQ, say) isn't
+  added, because it wouldn't group anything.
+- A preset without a category keeps its name as it is.
+- A name that already starts with its category, such as "Bass - Round" or "Bass_Round", isn't
+  given it twice.
+- Two presets that would end up with the same name get (2) after the second.
+
+Plenty of plug-ins don't come with categories. Most Plugin Alliance effects, for example, put
+every preset in one folder, so their names stay as they are.
+
+### Folders
+
+Libraries are saved in a folder for each maker, then a folder for each plug-in, such as
+Plugin Alliance, then bx_glue. That makes one plug-in's libraries easy to find, and easy to
+share. Preferences, Folders for libraries, can put them all in the maker's folder instead, the
+way Magpie did before version 0.2.0.
+
+Preferences, One library per category, is off at first. Turned on, each category gets its own
+file, such as "Knif Audio Knifonium - Bass VST3i.RPL", so you can import only the ones you
+want. Names still start with their category, because REAPER puts every library you import for
+a plug-in into one list. Only the first file has "0 Default settings". Categories with fewer
+presets than the smallest library worth keeping go together in a file called Other. With it
+off, a plug-in gets one file, except big sets: more than 300 presets in several folders or
+categories are split anyway, which Preferences can also change.
+
+File and folder names avoid everything Windows can't save: the characters it refuses, names
+like CON and NUL, and names so long that a copy in someone's Downloads folder would pass
+Windows' path limit. So a library made on a Mac can be copied to a PC as it is.
+
+### Organizing libraries you already have
+
+File, Organize Existing Libraries, does the same for libraries you already have, your own or
+ones you downloaded from the Hoard. Choose a folder of .RPL files. Magpie makes an organized
+copy beside it, with the same name and (organized) at the end. The folder you chose isn't
+changed.
+
+- Folders the libraries are already in are kept, with a folder for each plug-in added inside.
+  A library that isn't in any folder goes in a folder for its maker.
+- Preset names get their categories when the plug-in and its preset files are on this
+  computer, so Magpie can see which category each preset came from. Otherwise names stay as
+  they are, and only the folders change.
+- Other files in the folder, such as a read-me, are copied as they are.
+- Renaming a preset only changes its name. The settings it holds are copied byte for byte.
+- The report, in Open Report, lists every file and says how many names changed. It's saved
+  in Magpie's own folder, not among the libraries, so a folder you're sharing holds only the
+  libraries.
+
 ## Using a library in REAPER
 
 1. Put the plug-in on a track, so its FX window is open.
@@ -166,6 +231,7 @@ Preferences is REAPER's own Preferences key, and Say Progress is OSARA's Report 
 - Command-Shift-U: Uncheck All
 - Command-Shift-F: Show Libraries in Finder
 - Command-Shift-R: Open Report
+- Command-Shift-O: Organize Existing Libraries
 - Command-U: Check for Updates
 - Command-P: Preferences (in the Magpie menu), as in REAPER. Command-Comma opens them too.
 - Command-Q: Quit (in the Magpie menu)
@@ -183,6 +249,7 @@ Preferences is REAPER's own Preferences key, and Say Progress is OSARA's Report 
 - Control+Shift+U: Uncheck All
 - Control+Shift+F: Show Libraries in File Explorer
 - Control+Shift+R: Open Report
+- Control+Shift+O: Organize Existing Libraries
 - Control+U: Check for Updates
 - Control+P: Preferences (in the File menu), as in REAPER. Control+Comma opens them too.
 - Control+Q: Quit (in the File menu)
@@ -198,7 +265,8 @@ in the list says its status first. Select a plug-in, then Tab to Details to read
 found for it.
 
 Results are spoken as each plug-in finishes, without moving you. The end of a run is always
-spoken. A short sound plays when a library is made, when one can't be made, when a run is
+spoken, and so is the end of organizing: how many libraries, how many had categories, and how
+many names changed. A short sound plays when a library is made, when one can't be made, when a run is
 done, and when checking is waiting on you. What's said comes after the sound, never on top of
 it. Preferences has switches for the sounds and for the spoken results.
 
@@ -223,8 +291,8 @@ Each control's help tag is read after its name, as its description.
 - Some presets can't be made into REAPER presets, because the plug-in keeps them in a form
   only it reads. Those are counted in the report as files that couldn't be read.
 - Libraries with fewer than 5 working presets aren't saved. You can change that in Preferences.
-- When a plug-in has more than 300 presets in several folders, each folder becomes its own
-  library. You can turn that off or change the number in Preferences.
+- When a plug-in has more than 300 presets in several folders or categories, each becomes
+  its own library. You can turn that off or change the number in Preferences.
 - If your presets are somewhere unusual, such as a Native Instruments User Content folder on
   another drive, add that folder in Preferences, under Also look for presets in.
 - The report opens in TextEdit on a Mac and Notepad on Windows.
@@ -264,6 +332,7 @@ If a run went wrong, the report from Open Report is useful too. You can paste it
     .venv/bin/python -m rplmaker list       # what can be made, from the command line
     .venv/bin/python -m rplmaker build NAME
     .venv/bin/python -m rplmaker access     # Allow or Check Folder Access, from the command line
+    .venv/bin/python -m rplmaker organize FOLDER [--per-category] [--no-prefix] [--layout maker]
 
 On Windows, use `.venv\Scripts\python` in place of `.venv/bin/python`. Spoken results on
 Windows also need Prism (`pip install prismatoid`); without it, the window still works and the status line

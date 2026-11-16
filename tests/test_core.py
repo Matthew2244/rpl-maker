@@ -477,3 +477,176 @@ class Shortcuts(unittest.TestCase):
         # Command+Space is Spotlight, Command+Option+Space a Finder search
         for taken in ("RawCtrl+Space", "RawCtrl+Alt+Space", "Ctrl+Space", "Ctrl+Alt+Space"):
             self.assertNotIn(taken.lower(), [k.lower() for k in keys.every_key()])
+
+
+class Organizing(unittest.TestCase):
+    """Categories from the maker only, names that sort into groups, a folder tree, names every
+    system can save, and organizing libraries that already exist."""
+    F = formats.Found
+
+    def test_categories_from_folders(self):
+        from rplmaker import organize
+        r = "/Library/Audio/Presets/Maker/Synth/"
+        found = [self.F(r + "Bass/Deep.nksf", "nks", "Deep", category="Lead"),
+                 self.F(r + "Bass/Sub/Round.nksf", "nks", "Round"),
+                 self.F(r + "Pads/Warm.nksf", "nks", "Warm"),
+                 self.F(r + "Keys/Soft.nksf", "nks", "Soft")]
+        # folders win over what's inside the files
+        self.assertEqual(organize.categories(found), ["Bass", "Bass - Sub", "Pads", "Keys"])
+        self.assertEqual(organize.source(found), "folders")
+        self.assertEqual(organize.preset_groups(found), ["Bass", "Bass", "Pads", "Keys"])   # split by the top folder
+
+    def test_categories_from_inside_the_files(self):
+        from rplmaker import organize
+        found = [self.F("/p/a.nksf", "nks", "Deep", category="Bass"),
+                 self.F("/p/b.nksf", "nks", "Saw", category="Synth Lead"),
+                 self.F("/p/c.nksf", "nks", "Odd")]
+        self.assertEqual(organize.categories(found), ["Bass", "Synth Lead", ""])
+        self.assertEqual(organize.preset_names(found), ["Bass - Deep", "Synth Lead - Saw", "Odd"])
+        self.assertEqual(organize.preset_names(found, prefix=False), ["Deep", "Saw", "Odd"])
+        # one category on every preset says nothing: never used
+        same = [self.F("/p/a.nksf", "nks", "A", category="EQ"), self.F("/p/b.nksf", "nks", "B", category="EQ")]
+        self.assertEqual(organize.preset_names(same), ["A", "B"])
+        self.assertEqual(organize.source(same), "")
+
+    def test_nks_category_is_the_first_sound_type(self):
+        self.assertEqual(formats.nks_category({"types": [["Bass", "Bass Line"], ["Synth Lead"]]}), "Bass")
+        self.assertIsNone(formats.nks_category({"types": []}))
+        self.assertIsNone(formats.nks_category({}))
+        self.assertIsNone(formats.nks_category({"types": [[" "]]}))
+
+    def test_vstpreset_category_from_metainfo(self):
+        cls = "ABCDEF019182FAEB786C6E4178414432"
+        comp = b"component"
+        info = (b'<?xml version="1.0"?><MetaInfo><Attribute id="PlugInCategory" value="Fx|EQ" type="string"/>'
+                b'<Attribute id="MusicalInstrument" value="Piano|A. Piano" type="string"/></MetaInfo>')
+        head = b"VST3" + struct.pack("<I", 1) + cls.encode()
+        lst = 48 + len(comp) + len(info)
+        data = (head + struct.pack("<Q", lst) + comp + info + b"List" + struct.pack("<I", 2)
+                + b"Comp" + struct.pack("<QQ", 48, len(comp)) + b"Info" + struct.pack("<QQ", 48 + len(comp), len(info)))
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "Felt.vstpreset")
+            with open(p, "wb") as f:
+                f.write(data)
+            fd = formats.read(p)
+            self.assertEqual(fd.category, "Piano")      # the plug-in's own category isn't the preset's
+            self.assertEqual(formats.make_state(fd, fake_default())[0], comp)
+
+    def test_never_twice(self):
+        from rplmaker import organize
+        P = organize.prefixed
+        self.assertEqual(P("Bass", "Deep Sub"), "Bass - Deep Sub")
+        for already in ("Bass - Deep", "Bass-Deep", "BASS_Deep", "Bass: Deep", "Bass"):
+            self.assertEqual(P("Bass", already), already)
+        self.assertEqual(P("Bass", "Bassline"), "Bass - Bassline")        # a word, not a category
+        self.assertEqual(P("Funk - Live", "Live - Groove"), "Funk - Live - Groove")
+        self.assertEqual(P("", "  Plain "), "Plain")
+
+    def test_names_sort_into_groups_and_stay_unique(self):
+        from rplmaker import organize
+        names = ["Lead - Saw", "0 Default settings", "Bass - Round", "bass - Deep", "Lead - Saw"]
+        got = sorted(states.unique_names(names), key=organize.sort_key)
+        self.assertEqual(got, ["0 Default settings", "bass - Deep", "Bass - Round", "Lead - Saw", "Lead - Saw (2)"])
+
+    def test_folder_tree(self):
+        from rplmaker import organize
+        j = os.path.join
+        self.assertEqual(organize.library_dir("/out", "Plugin Alliance", "bx_glue"), j("/out", "Plugin Alliance", "bx_glue"))
+        self.assertEqual(organize.library_dir("/out", "Plugin Alliance", "bx_glue", "maker"), j("/out", "Plugin Alliance"))
+        self.assertEqual(organize.library_dir("/out", "", "A/B"), j("/out", "Other", "A-B"))
+
+    def test_names_windows_can_save(self):
+        from rplmaker import organize
+        S = organize.safe_name
+        self.assertEqual(S("CON"), "CON_")
+        self.assertEqual(S("nul.txt"), "nul.txt_")
+        self.assertEqual(S("COM1 "), "COM1_")
+        self.assertEqual(S("Console"), "Console")
+        self.assertEqual(S("a" * 300), "a" * organize.FILE_LIMIT)
+        self.assertEqual(len(S("b" * 300, organize.FOLDER_LIMIT)), organize.FOLDER_LIMIT)
+        self.assertEqual(S("Café"), "Café")         # composed, as every system shows it
+        self.assertEqual(S("Piano/Keys: Soft?"), "Piano-Keys- Soft-")
+
+    def test_split_per_category(self):
+        b = pipeline.Builder("/x", min_keep=2, split_over=300, per_category=True)
+        b._other = "Other"
+        kept = [(f"p{i}", b"") for i in range(9)]
+        groups = {f"p{i}": ("Bass" if i < 4 else "Lead" if i < 8 else "") for i in range(9)}
+        parts = b._parts(kept, groups)
+        self.assertEqual([(lab, len(items)) for lab, items in parts], [("Bass", 4), ("Lead", 4), ("Other", 1)])
+        b.per_category = False
+        self.assertEqual(len(b._parts(kept, groups)), 1)   # small set, not asked: one library
+
+    def test_plugin_of(self):
+        from rplmaker import organize
+        self.assertEqual(organize.plugin_of("VST3i: Knif Audio Knifonium (Plugin Alliance)"),
+                         ("Knif Audio Knifonium", "Plugin Alliance"))
+        self.assertEqual(organize.plugin_of("VST3: UADx 1176 (Universal Audio (UADx))"),
+                         ("UADx 1176", "Universal Audio (UADx)"))
+        self.assertEqual(organize.plugin_of("AU: Apple: AUDelay"), ("AUDelay", "Apple"))
+        self.assertEqual(organize.category_file_name("Knifonium VST3i by Sam", "Bass"), "Knifonium - Bass VST3i by Sam")
+        self.assertEqual(organize.category_file_name("odd name", "Bass"), "odd name - Bass")
+
+    def test_organize_existing_libraries(self):
+        from rplmaker import organize
+        st = fake_default()
+        def pay(name):
+            return states.payload(st, b"S-" + name.encode(), name)
+        names = ["0 Default settings", "Deep", "Saw", "Bass - Round", "Odd"]
+        text = states.rpl_text("VST3i: Synth (Maker)", [(n, pay(n)) for n in names])
+        plug = inventory.Plugin("VST3i: Synth (Maker)", "Synth", "Maker", "1" * 32, "s.vst3", True)
+        plug.presets["nks"] = [self.F("/i/a.nksf", "nks", "Deep", category="Bass"),
+                               self.F("/i/b.nksf", "nks", "Saw", category="Lead"),
+                               self.F("/i/c.nksf", "nks", "Round", category="Bass")]
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "Mine")
+            os.makedirs(os.path.join(src, "Brand"))
+            with open(os.path.join(src, "Synth VSTi by Sam.RPL"), "w") as f:
+                f.write(text)
+            with open(os.path.join(src, "Brand", "Synth VST3i by Sam.RPL"), "w") as f:
+                f.write(text)
+            with open(os.path.join(src, "README.txt"), "w") as f:
+                f.write("hello")
+            def read(path, mode="rb"):
+                with open(path, mode) as fh:
+                    return fh.read()
+            before = {p: read(os.path.join(src, p)) for p in ("README.txt", "Synth VSTi by Sam.RPL")}
+            dst = organize.organized_name(src)
+            self.assertTrue(dst.endswith("Mine (organized)"))
+            stats = organize.organize_folder(src, dst, [plug])
+            self.assertEqual((stats["libraries"], stats["renamed"], stats["copied"]), (2, 4, 1))
+            # at the top: its maker's folder, then the plug-in's; in a folder: that folder kept
+            top = os.path.join(dst, "Maker", "Synth", "Synth VSTi by Sam.RPL")
+            kept = os.path.join(dst, "Brand", "Synth", "Synth VST3i by Sam.RPL")
+            _, got = states.parse_rpl(read(top, "r"))
+            self.assertEqual([n for n, _ in got], ["0 Default settings", "Bass - Deep", "Bass - Round", "Lead - Saw", "Odd"])
+            for n, data in got:
+                self.assertTrue(data.endswith(b"\x00" + n.encode() + b"\x00\x10\x00\x00\x00"), n)   # the new name inside
+            old = {states.parse_state(p)["comp"] for _, p in states.parse_rpl(text)[1]}
+            self.assertEqual({states.parse_state(p)["comp"] for _, p in got}, old)   # the sounds untouched
+            self.assertTrue(os.path.exists(kept))
+            self.assertTrue(os.path.exists(os.path.join(dst, "README.txt")))
+            for p, b in before.items():                                          # the original never changed
+                self.assertEqual(read(os.path.join(src, p)), b)
+            # one library per category; the default only in the first
+            dst2 = organize.organized_name(src)
+            self.assertTrue(dst2.endswith("Mine (organized 2)"))
+            organize.organize_folder(src, dst2, [plug], per_category=True, min_keep=1)
+            folder = os.path.join(dst2, "Maker", "Synth")
+            self.assertEqual(sorted(os.listdir(folder)), ["Synth - Bass VSTi by Sam.RPL", "Synth - Lead VSTi by Sam.RPL",
+                                                          "Synth - Other VSTi by Sam.RPL"])
+            # a category smaller than a library worth keeping joins Other
+            dst4 = os.path.join(d, "min2")
+            organize.organize_folder(src, dst4, [plug], per_category=True, min_keep=2)
+            folder = os.path.join(dst4, "Maker", "Synth")
+            self.assertEqual(sorted(os.listdir(folder)), ["Synth - Bass VSTi by Sam.RPL", "Synth - Other VSTi by Sam.RPL"])
+            _, bass = states.parse_rpl(read(os.path.join(folder, "Synth - Bass VSTi by Sam.RPL"), "r"))
+            _, other = states.parse_rpl(read(os.path.join(folder, "Synth - Other VSTi by Sam.RPL"), "r"))
+            self.assertEqual([n for n, _ in bass], ["0 Default settings", "Bass - Deep", "Bass - Round"])
+            self.assertEqual(sorted(n for n, _ in other), ["Lead - Saw", "Odd"])
+            # without the plug-in here, nothing is renamed: only the folders change
+            dst3 = os.path.join(d, "plain")
+            stats = organize.organize_folder(src, dst3, [])
+            self.assertEqual(stats["renamed"], 0)
+            with self.assertRaises(ValueError):
+                organize.organize_folder(src, os.path.join(src, "inside"), [])

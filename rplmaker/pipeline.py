@@ -23,7 +23,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
-from . import compare, formats, portable, states
+from . import compare, formats, organize, portable, states
 from .inventory import Plugin
 
 DEFAULT_NAME = "0 Default settings"
@@ -95,55 +95,23 @@ def reason_lines(cut: list, limit_names: int = 12) -> list[str]:
 
 
 def safe_file_name(s: str) -> str:
-    """A name every system can save: none of the characters Windows refuses (a library made
-    on a Mac may be copied to a PC), no control characters, no trailing dot or space."""
-    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", s).strip(" .")
-    return s or "Untitled"
+    """A name every system can save (organize.safe_name): a library made on a Mac may be
+    copied to a PC."""
+    return organize.safe_name(s)
 
 
 def rel_parts(found: list) -> list[list[str]]:
-    """Each file's folders below the folder its install location's presets share. Files are
-    first bucketed by install location (the first four parts of the path: ~/Documents/...,
-    /Volumes/<drive>/..., /Library/...), so a library installed on two drives doesn't put
-    'Users' or 'Volumes' in every name."""
-    buckets: dict = {}
-    for i, f in enumerate(found):
-        parts = os.path.normpath(os.path.dirname(f.path)).split(os.sep)
-        buckets.setdefault(tuple(parts[:max(1, min(5, len(parts) - 2))]), []).append(i)
-    out = [[] for _ in found]
-    for idx in buckets.values():
-        dirs = [os.path.normpath(os.path.dirname(found[i].path)) for i in idx]
-        try:
-            root = os.path.commonpath(dirs)
-        except ValueError:
-            root = ""
-        for i, d in zip(idx, dirs):
-            rel = os.path.relpath(d, root) if root else "."
-            out[i] = [] if rel == "." else [p for p in rel.split(os.sep) if p]
-    return out
+    return organize.rel_parts([f.path for f in found])
 
 
-def preset_names(found: list) -> list[str]:
-    """'Folder - Sub - Name' from where each file sits, sorted later. A folder part the
-    preset's own name already starts with isn't repeated."""
-    names = []
-    for f, parts in zip(found, rel_parts(found)):
-        name = states.clean_name(f.name)
-        parts = [p for p in parts if not name.lower().startswith(p.lower() + " - ") and p.lower() != name.lower()]
-        names.append(states.clean_name(" - ".join(parts + [name])))
-    return names
+def preset_names(found: list, prefix: bool = True) -> list[str]:
+    """'Category - Name', the category from the maker's folders or files (organize.py)."""
+    return organize.preset_names(found, prefix)
 
 
 def preset_groups(found: list) -> list[str]:
-    """The top folder each preset sits in ('' for none): how a big set is split into one
-    library per folder (an ADpak, a Pianoteq instrument, an artist's presets)."""
-    rels = rel_parts(found)
-    first = {p[0] if p else "" for p in rels}
-    if len(first) < 3 and any(len(p) > 1 for p in rels):
-        # one or two wrappers above the real folders (Addictive Drums 2 and its [GM] twin above
-        # the ADpaks): go one level deeper
-        return [" - ".join(p[:2]) for p in rels]
-    return [p[0] if p else "" for p in rels]
+    """The category each preset's library is split by, '' for none (organize.py)."""
+    return organize.preset_groups(found)
 
 
 def got_comp(line):
@@ -191,8 +159,13 @@ def allow_folders(copy_dir: str = portable.COPY_DIR, events=None) -> list[tuple[
 
 class Builder:
     def __init__(self, outdir: str, author: str = "", min_keep: int = 5, check_twice: bool = True, split_over: int = 0,
-                 copy_dir: str = portable.COPY_DIR, events=None, stop=None, log=None):
+                 copy_dir: str = portable.COPY_DIR, events=None, stop=None, log=None, prefix: bool = True,
+                 per_category: bool = False, layout: str = "plugin"):
         self.outdir = outdir
+        self.prefix = prefix               # "Category - Name", so REAPER's one list keeps categories together
+        self.per_category = per_category   # one library per category, whatever the size
+        self.layout = layout if layout in organize.LAYOUTS else "plugin"
+        self._other = organize.OTHER_FOLDERS
         self.author = author
         self.min_keep = min_keep
         self.check_twice = check_twice
@@ -314,7 +287,8 @@ class Builder:
         # 2. the presets
         self.events("phase", p, "Reading preset files")
         cands = []
-        for fd, name, group in zip(found, preset_names(found), preset_groups(found)):
+        self._other = organize.OTHER_FOLDERS if organize.source(found) == "folders" else organize.OTHER
+        for fd, name, group in zip(found, preset_names(found, self.prefix), preset_groups(found)):
             try:
                 comp, ctrl = formats.make_state(fd, default)
                 cands.append((name, comp, ctrl, group))
@@ -383,7 +357,7 @@ class Builder:
                 if items:
                     r.small.append((label, len(items)))
                 continue
-            sub = os.path.join(self.outdir, safe_file_name(p.vendor or "Other"))
+            sub = organize.library_dir(self.outdir, p.vendor, p.name, self.layout)
             os.makedirs(sub, exist_ok=True)
             path = os.path.join(sub, file_name(p, self.author, label))
             k = 2
@@ -407,7 +381,7 @@ class Builder:
         if working == 0 and r.cut:
             r.note = f"None of its {r.tried} presets loaded."
         elif r.split or r.small:
-            r.note = (f"{working} of its {r.tried} presets work, but no folder of them has the "
+            r.note = (f"{working} of its {r.tried} presets work, but no folder or category of them has the "
                       f"{self.min_keep} a library needs.")
         else:
             r.note = (f"Only {working} of its {r.tried} presets work, fewer than the "
@@ -440,22 +414,25 @@ class Builder:
         return verdicts
 
     def _parts(self, kept, groups):
-        """[(label or None, presets)]: one library, or one per top folder when a plug-in has
-        more presets than split_over and they sit in more than one folder."""
+        """[(label or None, presets)]: one library, or one per category (a top folder, or the
+        category in the files) when a plug-in has more presets than split_over, or always when
+        per_category is on, and they fall in more than one."""
+        other = getattr(self, "_other", organize.OTHER_FOLDERS)
         labels = {groups.get(n, "") for n, _ in kept}
-        if not self.split_over or len(kept) <= self.split_over or len(labels) < 2:
+        big = self.split_over and len(kept) > self.split_over
+        if not (big or self.per_category) or len(labels) < 2:
             return [(None, kept)]
         by = {}
         for pr in kept:
-            by.setdefault(groups.get(pr[0], "") or "Other folders", []).append(pr)
-        # folders too small for a library of their own go together rather than being lost
+            by.setdefault(groups.get(pr[0], "") or other, []).append(pr)
+        # categories too small for a library of their own go together rather than being lost
         small = [k for k, v in by.items() if len(v) < self.min_keep]
-        if len(small) > 1 or (small and "Other folders" in by and small != ["Other folders"]):
+        if len(small) > 1 or (small and other in by and small != [other]):
             merged = []
             for k in small:
                 merged += by.pop(k)
-            by.setdefault("Other folders", []).extend(merged)
-        return sorted(by.items(), key=lambda x: (x[0] == "Other folders", x[0].lower()))
+            by.setdefault(other, []).extend(merged)
+        return sorted(by.items(), key=lambda x: (x[0] == other, x[0].lower()))
 
     def abort(self):
         """Stop now, from any thread: the copy is ended and nothing starts it again. Libraries
@@ -556,7 +533,7 @@ def report_text(results: list[Result], outdir: str, when: datetime.datetime | No
         for path, n in r.files:
             L.append(f"  File: {os.path.relpath(path, outdir)}, {n} presets")
         for label, n in r.small:
-            L.append(f"  Not made: the {label} folder, only {n} working, fewer than a library needs.")
+            L.append(f"  Not made: {label}, only {n} working, fewer than a library needs.")
         hows = {}
         for _n, h in r.kept:
             hows[h] = hows.get(h, 0) + 1

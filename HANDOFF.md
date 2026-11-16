@@ -46,6 +46,7 @@ updating. Names offered: Magpie, Preset Hound, Squirrel, Trove, Hoardling.
 | `gui.py` | the window; `speech.py` VoiceOver and Prism; `updates.py` Sparkle and WinSparkle |
 | `keys.py` | every menu shortcut, wx-free, so a test checks each key means one thing |
 | `inreaper.py` | which plug-ins already have their presets in REAPER's presets folder (read only) |
+| `organize.py` | the maker's categories, "Category - Name", the folder tree, names Windows can save, organizing existing libraries |
 | `cli.py`, `settings.py`, `selftest.py` | command line; one JSON settings file; `--self-test` |
 
 **Matching a file to a plug-in**, best evidence first: the VST3 class id inside the file
@@ -139,6 +140,35 @@ Only `inventory.REAPER_RESOURCE` is read, like the plug-in list: a portable REAP
 path, size and modification time; new files read on 8 threads, only the first 64 KB of an
 NKS file. A cold scan of about 91,000 files took 7 s on an M-series Mac, a cached one 1.8 s.
 
+**Organizing** (`organize.py`, 0.2.0; Matthew: "You know I like organization"). REAPER (7.86)
+shows a plug-in's presets as one flat list, no folders or submenus (checked in its
+whatsnew.txt), and every imported library joins that list. So in REAPER organization is the
+name: "Category - Name" sorts into groups. On disk it's a tree: `<out>/<Maker>/<Plug-in>/`
+(`layout` "plugin", the default; "maker" is the pre-0.2.0 `<out>/<Maker>/`).
+- Categories only from the maker, never from words in names: the folders below the shared
+  root (`rel_parts`, the old `preset_names` logic, unchanged), else the category inside the
+  file (`Found.category`: NKS `NISI.types[0][0]`; .vstpreset MetaInfo `MusicalInstrument` or
+  `MusicalCategory`, top level, never `PlugInCategory`, which is the plug-in's). A file
+  category is used only when the set has at least two (Ozone 12's NKS are all "EQ" or
+  "Dynamics": useless). Scan cache version 2, since `Found` gained the field.
+- `prefixed` never doubles: a name starting with the category word followed by `-`, `_`,
+  `:`, `/` or `|` (or equal to it) keeps it once; "Bassline" still gets "Bass - ".
+  `unique_names` adds (2). Setting `prefix_category` (on).
+- `per_category` (off): one library per category whatever the size; `split_over` still splits
+  big sets, now by file categories too (bx_oberhausen 350 and Knifonium 319 split by default).
+  Small categories join "Other" (file categories) or "Other folders" (folders).
+- `safe_name`: Windows' characters, reserved device names (CON, NUL, COM1...), NFC, folder
+  parts 64 and file stems 120 characters so a copy under a PC's Downloads stays under 260.
+- `organize_folder` (File, Organize Existing Libraries; `rplmaker organize`): copies a folder
+  of .RPL into `<folder> (organized)`, never touching the source; keeps the source's own
+  subfolders and adds a plug-in folder, top-level files go under their maker. Categories come
+  from the installed plug-in's preset files (matched by the library's first line, else name and
+  maker), by the preset's own name or its full "Folder - Name", skipping names found in two
+  categories. A renamed preset's VST3 payload tail (00 name 00 10000000) is renamed too; any
+  other layout is left as is. States are byte-identical (checked on all 7,435 presets of the PA
+  Hoard set). Report goes to the support folder's `reports/`, not among the libraries.
+- Checked for real: `build bx_oberhausen --per-category`, 350/350 in 13 category libraries.
+
 ## Sounds (Matthew's picks, 2026-11-14)
 
 Picked by ear from the audition reels: **done** = synth pluck take 1, **failed** = synth pluck
@@ -222,7 +252,9 @@ Access, check states, names and help tags through MSAA, the copy hidden; `releas
 2026-11-15 (Settings' say-results help tag names the screen reader on Windows; a sweep found no
 other Mac wording that shows there). v0.1.6 2026-11-15 (Settings renamed Preferences, on REAPER's Command/Control+P;
 Say Progress on OSARA's Report selection key; "Already in REAPER"; the Windows copy never asks
-for an audio device and never shows; `release-notes/0.1.6.md`).
+for an audio device and never shows; `release-notes/0.1.6.md`). v0.2.0 2026-11-15 (organizing:
+categories in names, Maker / Plug-in folders, one library per category, Organize Existing
+Libraries; `release-notes/0.2.0.md`).
 
 Windows has no code signing certificate, so SmartScreen may warn; the README says what to do.
 Updates are still protected: WinSparkle checks the EdDSA signature first.

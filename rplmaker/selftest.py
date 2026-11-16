@@ -21,6 +21,23 @@ def main() -> int:
         assert pr == [("a", b"1")]
     except Exception as e:  # noqa: BLE001
         problems.append(f"preset files: {e}")
+    try:   # organizing: a library copied into a folder tree, its names given their categories
+        import tempfile
+        from . import formats, organize
+        from .inventory import Plugin
+        with tempfile.TemporaryDirectory() as d:
+            src, dst = os.path.join(d, "in"), os.path.join(d, "out")
+            os.makedirs(src)
+            with open(os.path.join(src, "T VST3 by X.RPL"), "w", encoding="utf-8") as f:
+                f.write(states.rpl_text("VST3: T (V)", [("a", b"1"), ("b", b"2")]))
+            p = Plugin("VST3: T (V)", "T", "V", "0" * 32, "t.vst3", False)
+            p.presets["nks"] = [formats.Found("/x/a.nksf", "nks", "a", category="Bass"),
+                                formats.Found("/x/b.nksf", "nks", "b", category="Lead")]
+            organize.organize_folder(src, dst, [p], per_category=True, min_keep=1)
+            assert sorted(os.listdir(os.path.join(dst, "V", "T"))) == ["T - Bass VST3 by X.RPL", "T - Lead VST3 by X.RPL"]
+            assert organize.safe_name("CON") == "CON_"
+    except Exception as e:  # noqa: BLE001
+        problems.append(f"organizing: {e!r}")
     from . import updates
     if getattr(sys, "frozen", False):
         if sys.platform == "darwin" and not updates._sparkle_path():

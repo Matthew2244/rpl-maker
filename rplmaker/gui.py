@@ -16,7 +16,7 @@ import time
 
 import wx
 
-from . import APP_NAME, VERSION, access, formats, inreaper, inventory, keys, pipeline, portable, settings, sounds, speech, updates
+from . import APP_NAME, VERSION, access, formats, inreaper, inventory, keys, organize, pipeline, portable, settings, sounds, speech, updates
 
 WIN = sys.platform == "win32"
 # Folder access, the same on both systems (Matthew: "everyone has the same stuff"): on a Mac,
@@ -305,6 +305,8 @@ class MainFrame(wx.Frame):
         mi_folder = m.Append(wx.ID_ANY, "Show Libraries in " + ("File Explorer" if sys.platform == "win32" else "Finder")
                              + "\t" + K["folder"], "Open the libraries folder")
         mi_report = m.Append(wx.ID_ANY, "Open Report\t" + K["report"], "Open the last run's report")
+        self.mi_organize = m.Append(wx.ID_ANY, "Organize Existing Libraries...\t" + K["organize"],
+                                    "Copy a folder of libraries into a new folder, organized by plug-in and category")
         m.AppendSeparator()
         mi_set = m.Append(wx.ID_PREFERENCES, "Preferences...\t" + K["preferences"], "Preferences")
         mi_quit = m.Append(wx.ID_EXIT, "Quit\t" + K["quit"], "Quit")
@@ -321,6 +323,7 @@ class MainFrame(wx.Frame):
         h = wx.Menu()
         mi_imp = h.Append(wx.ID_ANY, "How to Import a Library", "How to use a library in REAPER")
         mi_how = h.Append(wx.ID_ANY, "How Presets Are Checked", "What makes a preset pass")
+        mi_org = h.Append(wx.ID_ANY, "How Presets Are Organized", "Categories in names, and the folders libraries go in")
         h.AppendSeparator()
         mi_upd = h.Append(wx.ID_ANY, "Check for Updates...\t" + K["updates"], "See whether a newer version is out")
         mi_about = h.Append(wx.ID_ABOUT, f"About {APP_NAME}", "About")
@@ -353,6 +356,8 @@ class MainFrame(wx.Frame):
         B(wx.EVT_MENU, lambda e: say(self.progress_words, polite=False), mi_prog)
         B(wx.EVT_MENU, lambda e: self.message("How to Import a Library", pipeline.IMPORT_STEPS), mi_imp)
         B(wx.EVT_MENU, lambda e: self.message("How Presets Are Checked", HOW_CHECKED), mi_how)
+        B(wx.EVT_MENU, lambda e: self.message("How Presets Are Organized", HOW_ORGANIZED), mi_org)
+        B(wx.EVT_MENU, lambda e: self.on_organize(), self.mi_organize)
         B(wx.EVT_MENU, lambda e: self.message(f"About {APP_NAME}", ABOUT), mi_about)
         B(wx.EVT_MENU, lambda e: self.on_updates(), mi_upd)
 
@@ -376,6 +381,7 @@ class MainFrame(wx.Frame):
         self.mi_make.Enable(idle)
         if self.mi_access:
             self.mi_access.Enable(idle)
+        self.mi_organize.Enable(idle)
         self.b_stop.Enable(self.busy == "build")
         self.mi_stop.Enable(self.busy == "build")
         self.b_report.Enable(bool(self.last_report))
@@ -479,7 +485,8 @@ class MainFrame(wx.Frame):
     def scan(self):
         if self.busy:
             say({"build": "Libraries are being made. Look for presets again when the run is done.",
-                 "access": "Folder access is being checked. Look for presets again when that's done."}
+                 "access": "Folder access is being checked. Look for presets again when that's done.",
+                 "organize": "Libraries are being organized. Look for presets again when that's done."}
                 .get(self.busy, "Already looking for presets."), polite=False)
             return
         self.busy = "scan"
@@ -603,7 +610,10 @@ class MainFrame(wx.Frame):
         self.builder = pipeline.Builder(out, author=self.cfg["author"], min_keep=int(self.cfg["min_keep"]),
                                         check_twice=bool(self.cfg["check_twice"]),
                                         split_over=int(self.cfg["split_over"]) if self.cfg["split_big"] else 0,
-                                        events=events, stop=lambda: self.stop_flag)
+                                        events=events, stop=lambda: self.stop_flag,
+                                        prefix=bool(self.cfg.get("prefix_category", True)),
+                                        per_category=bool(self.cfg.get("per_category", False)),
+                                        layout=self.cfg.get("layout", "plugin"))
 
         note = [""]
 
@@ -812,6 +822,72 @@ class MainFrame(wx.Frame):
         else:
             say("There's no report yet. One is written at the end of each run.", polite=False)
 
+    # -- organizing libraries that already exist ---------------------------------------------
+    def on_organize(self):
+        if self.busy:
+            say("Wait until the current job is done, then organize.", polite=False)
+            return
+        dlg = wx.DirDialog(self, "Choose a folder of libraries to organize", os.path.expanduser(self.cfg["out_dir"]))
+        go = dlg.ShowModal() == wx.ID_OK
+        src = dlg.GetPath()
+        dlg.Destroy()
+        if not go or not src:
+            return
+        dst = organize.organized_name(src)
+        cfg = dict(self.cfg)
+        words = (f"The libraries in {os.path.basename(src)} are copied into a new folder beside it, "
+                 f"{os.path.basename(dst)}. The folder you chose isn't changed.\n\n" + organize_choice_words(cfg))
+        ask = wx.MessageDialog(self, words, "Organize Libraries?", wx.OK | wx.CANCEL)
+        ask.SetOKCancelLabels("Organize", "Cancel")
+        go = ask.ShowModal() == wx.ID_OK
+        ask.Destroy()
+        if not go:
+            return
+        self.busy = "organize"
+        self._enable()
+        self.set_progress(f"Organizing the libraries in {os.path.basename(src)}.", 0)
+        plugs = list(self.plugs)
+
+        def work():
+            path, stats, err = None, None, None
+            try:
+                stats = organize.organize_folder(src, dst, plugs, prefix=bool(cfg.get("prefix_category", True)),
+                                                 per_category=bool(cfg.get("per_category", False)),
+                                                 layout=cfg.get("layout", "plugin"), min_keep=int(cfg["min_keep"]))
+                path = organize.save_report(organize.report_text(stats, src, dst))
+            except Exception as ex:  # noqa: BLE001 - said, never a crash
+                err = getattr(ex, "strerror", None) or str(ex)
+            wx.CallAfter(self.organize_done, dst, stats, path, err)
+        threading.Thread(target=work, daemon=True).start()
+
+    def organize_done(self, dst, stats, report, err):
+        if not self:
+            return
+        self.busy = None
+        if report:
+            self.last_report = report
+        self._enable()
+        if err or not stats:
+            words = f"Couldn't organize them: {err}."
+            self.set_progress(words, 1)
+            self.cue("failed", words, polite=False)
+            return
+        if not stats["libraries"]:
+            words = "There were no libraries (.RPL files) in that folder, so nothing was organized."
+            self.set_progress(words, 1)
+            self.cue("failed", words, polite=False)
+            return
+        n = len(stats["categorized"])
+        words = (f"Done. {plural(stats['libraries'], 'library', 'libraries')} organized into "
+                 f"{os.path.basename(dst)}. "
+                 + (f"{plural(n, 'library', 'libraries')} had categories from "
+                    f"{'its maker' if n == 1 else 'their makers'}, and "
+                    f"{plural(stats['renamed'], 'preset name')} now start with their category. " if n else
+                    "None had categories from their makers, so preset names are as they were. ")
+                 + "Open Report has the details.")
+        self.set_progress(words, 1)
+        self.cue("done", words, polite=False)
+
     def on_settings(self):
         dlg = PreferencesDialog(self, self.cfg)
         if dlg.ShowModal() == wx.ID_OK:
@@ -883,11 +959,12 @@ class PreferencesDialog(wx.Dialog):
                               "catches presets that only load sometimes.")
         s.Add(self.twice, 0, wx.ALL, 8)
 
-        self.split = wx.CheckBox(self, label="Split big sets into one library per folder")
+        self.split = wx.CheckBox(self, label="Split big sets into one library per folder or category")
         self.split.SetValue(bool(cfg["split_big"]))
         self.split.SetToolTip("When a plug-in has more presets than the number below and they sit in several "
-                              "folders (an ADpak, a Pianoteq instrument), each folder becomes its own library, "
-                              "so you can import just the ones you want. Only the first has 0 Default settings.")
+                              "folders (an ADpak, a Pianoteq instrument) or categories, each becomes its own "
+                              "library, so you can import just the ones you want. Only the first has 0 Default "
+                              "settings.")
         s.Add(self.split, 0, wx.ALL, 8)
         stacked("Split when a plug-in has more presets than:", None, "")
         self.split_over = wx.SpinCtrl(self, min=20, max=100000, initial=int(cfg["split_over"]))
@@ -895,6 +972,36 @@ class PreferencesDialog(wx.Dialog):
         self.split_over.SetToolTip("Below this many, a plug-in's presets stay in one library even if they're "
                                    "in several folders.")
         s.Add(self.split_over, 0, wx.LEFT | wx.RIGHT, 8)
+
+        self.prefix = wx.CheckBox(self, label="Start preset names with their category")
+        self.prefix.SetValue(bool(cfg.get("prefix_category", True)))
+        self.prefix.SetToolTip("REAPER shows a plug-in's presets as one list, sorted by name, with no folders. "
+                               'Starting each name with its category, as in "Bass - Deep Sub", keeps each '
+                               "category together in that list. Categories come only from the plug-in's maker: "
+                               "the folders its presets were installed in, or the category written in the preset "
+                               "file. Presets without one keep their name, and a name that already starts with "
+                               "its category isn't given it twice.")
+        s.Add(self.prefix, 0, wx.ALL, 8)
+
+        stacked("Folders for libraries:", None, "")
+        self.layout_keys = list(organize.LAYOUTS)
+        self.layout = wx.Choice(self, choices=[organize.LAYOUTS[k] for k in self.layout_keys])
+        self.layout.SetSelection(self.layout_keys.index(cfg.get("layout", "plugin"))
+                                 if cfg.get("layout", "plugin") in self.layout_keys else 0)
+        speech.label(self.layout, "Folders for libraries")
+        self.layout.SetToolTip("Maker, then plug-in: each maker gets a folder, and each plug-in a folder inside "
+                               "it, such as Plugin Alliance, bx_glue. Easy to find, and easy to share one "
+                               "plug-in's libraries. Maker only: every library of a maker in one folder, as "
+                               "before.")
+        s.Add(self.layout, 0, wx.LEFT | wx.RIGHT, 8)
+
+        self.per_cat = wx.CheckBox(self, label="One library per category")
+        self.per_cat.SetValue(bool(cfg.get("per_category", False)))
+        self.per_cat.SetToolTip("Each of the maker's categories gets its own file, such as Knifonium - Bass, so "
+                                "you can import just the ones you want. Names still start with their category, "
+                                "because REAPER puts every library you import for a plug-in into one list. "
+                                "Off: one file per plug-in, except big sets, which the setting above splits.")
+        s.Add(self.per_cat, 0, wx.ALL, 8)
 
         self.sounds = wx.CheckBox(self, label="Play sounds")
         self.sounds.SetValue(bool(cfg.get("sounds", True)))
@@ -967,6 +1074,8 @@ class PreferencesDialog(wx.Dialog):
         return {"out_dir": self.out.GetValue(), "author": self.author.GetValue().strip(),
                 "min_keep": self.min.GetValue(), "check_twice": self.twice.GetValue(),
                 "split_big": self.split.GetValue(), "split_over": self.split_over.GetValue(),
+                "prefix_category": self.prefix.GetValue(), "per_category": self.per_cat.GetValue(),
+                "layout": self.layout_keys[max(0, self.layout.GetSelection())],
                 "speak": self.speak.GetValue(), "sounds": self.sounds.GetValue(), "extra_folders": list(self.folders.GetItems())}
 
 
@@ -994,6 +1103,29 @@ FIRST_ACCESS_WORDS_WIN = ("Windows doesn't ask about folders the way a Mac does,
 ACCESS_WORDS_WIN = ("Start reads every folder presets are kept in and saves a test file in your libraries "
                     "folder (then removes it). If something can't be read or saved, it says which and how to "
                     "fix it, including Windows Security's ransomware protection. Nothing else is changed.")
+
+def organize_choice_words(cfg: dict) -> str:
+    """What organizing will do, in the person's current Preferences, in plain sentences."""
+    w = []
+    w.append("Preset names start with their category, where the plug-in's maker gave one."
+             if cfg.get("prefix_category", True) else "Preset names stay as they are.")
+    w.append("Each plug-in gets a folder inside its maker's folder." if cfg.get("layout", "plugin") == "plugin"
+             else "Libraries go in their maker's folder.")
+    if cfg.get("per_category"):
+        w.append("Each category gets its own library.")
+    w.append("Preferences changes these.")
+    return " ".join(w)
+
+
+HOW_ORGANIZED = """REAPER shows a plug-in's presets as one list, sorted by name. It has no folders or submenus for presets, and every library you import for a plug-in goes into that same list.
+
+So Magpie keeps a category together by its name. With Start preset names with their category on (it is at first), a preset in the maker's Bass category is called "Bass - Deep Sub", and all the Bass presets sit together in REAPER's list. A name that already starts with its category isn't given it twice. Two presets that would end up with the same name get (2) after the second.
+
+Categories come only from the plug-in's maker: the folders its presets were installed in, or the category written inside the preset file, as in Native Instruments presets. Magpie never guesses a category from the words in a name. A preset without one keeps its name as it is.
+
+On your computer, libraries go in a folder for each maker, then a folder for each plug-in, such as Plugin Alliance, then bx_glue. Preferences can put them in the maker's folder only. One library per category makes a file for each category, so you can import just the ones you want. Big sets are split that way anyway, unless you turn that off.
+
+File, Organize Existing Libraries does the same for libraries you already have, yours or ones you downloaded: choose a folder, and an organized copy is made beside it, named the same with (organized) at the end. The folder you chose isn't changed. The folders the libraries were in are kept. Names get their categories when the plug-in and its preset files are on this computer."""
 
 HOW_CHECKED = """Each plug-in is loaded in a separate copy of REAPER, hidden and silent, made from your REAPER. Your own REAPER, its settings and its presets are never touched.
 
