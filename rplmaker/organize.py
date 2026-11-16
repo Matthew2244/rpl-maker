@@ -221,6 +221,8 @@ def organize_library(text: str, cmap: dict | None, prefix: bool = True) -> tuple
     was renamed, so each category sits together."""
     plug, presets = states.parse_rpl(text)
     out, renamed = [], 0
+    if cmap and already_grouped([n for n, _ in presets]):
+        cmap = None   # named "Group - Preset" already, its own way: adding more would only muddle it
     for name, data in presets:
         cat = _lookup(cmap, name) if cmap else ""
         new = prefixed(cat, name) if (prefix and cat) else name
@@ -234,6 +236,13 @@ def organize_library(text: str, cmap: dict | None, prefix: bool = True) -> tuple
     if renamed:
         rows.sort(key=lambda r: sort_key(r[0]))
     return plug, rows, renamed
+
+
+def already_grouped(names: list[str]) -> bool:
+    """Is a library already named in groups ("Black Oyster - Clean", "Legacy - 808 Crush")?
+    Four in five of its names, not counting 0 Default settings, holding " - " says so."""
+    real = [n for n in names if n != DEFAULT]
+    return bool(real) and sum(SEP in n for n in real) >= 0.8 * len(real)
 
 
 def category_file_name(stem: str, category: str) -> str:
@@ -337,7 +346,8 @@ def report_text(stats: dict, src: str, dst: str) -> str:
          f"{stats['libraries']} libraries, {stats['presets']} presets, in {stats['files']} files.",
          f"{len(stats['categorized'])} {'library' if len(stats['categorized']) == 1 else 'libraries'} "
          f"had categories from {'its maker' if len(stats['categorized']) == 1 else 'their makers'}; "
-         f"{stats['renamed']} preset names now start with their category.",
+         + (f"1 preset name now starts with its category." if stats["renamed"] == 1 else
+            f"{stats['renamed']} preset names now start with their category."),
          f"{len(stats['plain'])} had no categories to add, so their names are as they were.",
          "The original folder wasn't changed.", ""]
     if stats["categorized"]:

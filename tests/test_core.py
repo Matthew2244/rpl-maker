@@ -577,6 +577,18 @@ class Organizing(unittest.TestCase):
         b.per_category = False
         self.assertEqual(len(b._parts(kept, groups)), 1)   # small set, not asked: one library
 
+    def test_a_library_already_in_groups_is_left_alone(self):
+        from rplmaker import organize
+        cmap = {"clean": "Addictive Drums 2 - Kit", "dry": "Addictive Drums 2 - Kit"}
+        text = states.rpl_text("VST3i: AD2 (XLN)", [("Kit - Clean", b"1"), ("Kit - Dry", b"2"), ("Clean", b"3")])
+        self.assertFalse(organize.already_grouped(["Kit - Clean", "Clean", "Dry"]))
+        self.assertTrue(organize.already_grouped(["0 Default settings", "Kit - Clean", "Kit - Dry"]))
+        _, rows, renamed = organize.organize_library(states.rpl_text("VST3i: AD2 (XLN)", [
+            ("Kit - Clean", b"1"), ("Kit - Dry", b"2"), ("Kit - Wet", b"3"), ("Kit - Room", b"4"), ("Clean", b"5")]), cmap)
+        self.assertEqual(renamed, 0)
+        _, rows, renamed = organize.organize_library(text, {"clean": "Kit"})
+        self.assertEqual([r[0] for r in rows], ["Kit - Clean", "Kit - Clean (2)", "Kit - Dry"])   # never two the same
+
     def test_plugin_of(self):
         from rplmaker import organize
         self.assertEqual(organize.plugin_of("VST3i: Knif Audio Knifonium (Plugin Alliance)"),
