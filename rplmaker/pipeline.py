@@ -23,7 +23,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
-from . import compare, formats, organize, portable, states
+from . import compare, formats, inventory, organize, portable, states
 from .inventory import Plugin
 
 DEFAULT_NAME = "0 Default settings"
@@ -157,6 +157,52 @@ def allow_folders(copy_dir: str = portable.COPY_DIR, events=None) -> list[tuple[
     return out
 
 
+def scan_new(copy_dir: str = portable.COPY_DIR, events=None, log=None) -> tuple[list[str], list[str]]:
+    """Have the checking copy scan the plug-ins your REAPER hasn't scanned yet (installed since
+    it last started), so their presets can be offered. Your REAPER's own plug-in list is never
+    written: the copy keeps what it found in its own. Returns (scanned, not scanned), plug-in
+    file names without .vst3; a plug-in that didn't answer the copy is in the second list."""
+    events = events or (lambda *a: None)
+    new = inventory.unscanned_files(checker=copy_dir)
+    if not new:
+        return [], []
+    s = portable.Session(copy_dir, log=log, on_scan=lambda names: events("scanning", names))
+    try:
+        s.start()
+    finally:
+        s.stop()
+    left = set(inventory.unscanned_files(checker=copy_dir))
+    name = lambda f: os.path.splitext(os.path.basename(f))[0]   # noqa: E731
+    return [name(f) for f in new if f not in left], [name(f) for f in new if f in left]
+
+
+def scanning_words(names: list[str]) -> str:
+    n = len(names)
+    return (f"The checking copy of REAPER is scanning {n} plug-in{'s' if n != 1 else ''} your REAPER hasn't "
+            f"scanned yet: {', '.join(names)}. Big instruments can take a minute or more each."
+            + ("" if portable.WIN else " If macOS asks whether REAPER for checking presets can open a folder, "
+               "choose Allow; scanning carries on by itself."))
+
+
+def scan_new_words(done: list[str], left: list[str]) -> str:
+    out = []
+    if done:
+        out.append(f"Scanned {', '.join(done)}. Their presets are offered now; libraries made for them work in "
+                   "your REAPER once it has scanned them too (it does that when it next starts).")
+    if left:
+        out.append(f"{', '.join(left)} didn't answer the checking copy, so {'it' if len(left) == 1 else 'they'} "
+                   "can't be offered yet. A plug-in waiting on its own activation or content does this; "
+                   "open it once in REAPER, then try again.")
+    return " ".join(out)
+
+
+def unscanned_words(names: list[str], how: str = "File, Scan New Plug-ins") -> str:
+    n = len(names)
+    return (f"{n} plug-in{'s' if n != 1 else ''} your REAPER hasn't scanned yet, so {'its' if n == 1 else 'their'} "
+            f"presets aren't offered: {', '.join(names)}. {how} has the checking copy of REAPER "
+            "scan them; your REAPER isn't changed.")
+
+
 class Builder:
     def __init__(self, outdir: str, author: str = "", min_keep: int = 5, check_twice: bool = True, split_over: int = 0,
                  copy_dir: str = portable.COPY_DIR, events=None, stop=None, log=None, prefix: bool = True,
@@ -182,7 +228,8 @@ class Builder:
         if self.stopped():
             raise StopIteration
         if self.session is None:
-            self.session = portable.Session(self.copy_dir, log=self.log)
+            self.session = portable.Session(self.copy_dir, log=self.log,
+                                            on_scan=lambda names: self.events("scanning", names))
         return self.session
 
     def close(self):
@@ -192,16 +239,16 @@ class Builder:
 
     BATCH = 500   # presets per preset file the copy loads: a 26,000-preset set never sits in one
 
-    def _verify(self, fx: str, ini_file: str, presets: list, label: str, plugin=None) -> dict:
+    def _verify(self, fx: str, ini_file: str, presets: list, label: str, plugin=None, settle: float = 0) -> dict:
         """Load every preset in the checking copy, BATCH at a time.
         Returns {index: P line or 'CRASH:why'}, indexes counted across all batches."""
         got = {}
         for off in range(0, len(presets), self.BATCH):
             got.update(self._verify_batch(fx, ini_file, presets[off:off + self.BATCH], off, len(presets),
-                                          label, plugin))
+                                          label, plugin, settle))
         return got
 
-    def _verify_batch(self, fx, ini_file, presets, off, total, label, plugin) -> dict:
+    def _verify_batch(self, fx, ini_file, presets, off, total, label, plugin, settle: float = 0) -> dict:
         s = self._session()
         s.write_presets(ini_file, states.ini_text(presets))
         n = len(presets)
@@ -228,7 +275,8 @@ class Builder:
             if self.stopped():
                 raise StopIteration
             try:
-                s.run(f"VERIFY\t{fx}\t{n}\t{start}", quiet_limit=240, on_line=on_line,
+                s.run(f"VERIFY\t{fx}\t{n}\t{start}" + (f"\t{settle:g}" if settle else ""), quiet_limit=240,
+                      on_line=on_line,
                       on_wait=lambda: self.events("waiting", plugin, portable.WAITING_WORDS), wait_after=15)
                 break
             except portable.CheckerError as e:
@@ -286,21 +334,8 @@ class Builder:
 
         # 2. the presets
         self.events("phase", p, "Reading preset files")
-        cands = []
         self._other = organize.OTHER_FOLDERS if organize.source(found) == "folders" else organize.OTHER
-        for fd, name, group in zip(found, preset_names(found, self.prefix), preset_groups(found)):
-            try:
-                comp, ctrl = formats.make_state(fd, default)
-                cands.append((name, comp, ctrl, group))
-            except Exception as e:  # noqa: BLE001
-                r.unreadable.append((fd.path, str(e) or "couldn't be read"))
-        cands.sort(key=lambda c: c[0].lower())
-        names = states.unique_names([DEFAULT_NAME] + [c[0] for c in cands])
-        presets = [(names[0], states.payload(default, default["comp"], names[0], default["ctrl"]))]
-        groups = {}
-        for name, (_, comp, ctrl, group) in zip(names[1:], cands):
-            presets.append((name, states.payload(default, comp, name, ctrl)))
-            groups[name] = group
+        presets, groups, r.unreadable = self._presets(found, default)
         if len(presets) == 1:
             r.status = "failed"
             r.note = f"None of its {len(found)} preset files could be made into REAPER presets."
@@ -315,6 +350,20 @@ class Builder:
             r.status, r.note = "failed", str(e)[:1].upper() + str(e)[1:] + "."
             return r
         verdicts = self._judge_all(presets, got, default, default_pv)
+        settle = 0.0
+        if sum(v.ok for v in verdicts[1:]) < 0.5 * (len(presets) - 1):
+            # Some plug-ins apply a preset on their own timer, a moment after it's chosen
+            # (IK Multimedia's Hammond B-3X), so read straight away they still hold the last
+            # one. Try a few again with time to settle; if that's what was wrong, check them all
+            # that way (slower: SETTLE seconds a preset).
+            try:
+                better = self._settled(p, found, presets, verdicts)
+            except portable.CheckerError as e:
+                if str(e) == "stopped" or self.stopped():
+                    raise StopIteration
+                better = None
+            if better:
+                settle, cap, default, default_pv, presets, groups, r.unreadable, got, verdicts = better
         how = {pr[0]: v.how for pr, v in zip(presets, verdicts) if v.ok}
         kept = [pr for pr, v in zip(presets[1:], verdicts[1:]) if v.ok]
         r.cut = [(pr[0], v.why) for pr, v in zip(presets[1:], verdicts[1:]) if not v.ok]
@@ -328,7 +377,7 @@ class Builder:
             lib = ([presets[0]] if n_part == 0 else []) + items
             if self.check_twice and len(items) >= self.min_keep:
                 try:
-                    got2 = self._verify(p.fx, ini_file, lib, "Checking again", p)
+                    got2 = self._verify(p.fx, ini_file, lib, "Checking again", p, settle)
                 except portable.CheckerError as e:
                     if str(e) == "stopped" or self.stopped():
                         raise StopIteration
@@ -387,6 +436,57 @@ class Builder:
             r.note = (f"Only {working} of its {r.tried} presets work, fewer than the "
                       f"{self.min_keep} a library needs." if r.tried else "No presets to check.")
         return r
+
+    SETTLE = 1.0   # seconds a plug-in that applies presets on a timer gets for each one (Hammond B-3X needs ~1)
+    SAMPLE = 8     # presets tried again with time to settle, to see whether it helps
+
+    def _presets(self, found, default):
+        """The REAPER presets for these files, given the plug-in's default state: the list
+        ("0 Default settings" first), each one's group, and the files that couldn't be used."""
+        cands, unreadable = [], []
+        for fd, name, group in zip(found, preset_names(found, self.prefix), preset_groups(found)):
+            try:
+                comp, ctrl = formats.make_state(fd, default)
+                cands.append((name, comp, ctrl, group))
+            except Exception as e:  # noqa: BLE001
+                unreadable.append((fd.path, str(e) or "couldn't be read"))
+        cands.sort(key=lambda c: c[0].lower())
+        names = states.unique_names([DEFAULT_NAME] + [c[0] for c in cands])
+        presets = [(names[0], states.payload(default, default["comp"], names[0], default["ctrl"]))]
+        groups = {}
+        for name, (_, comp, ctrl, group) in zip(names[1:], cands):
+            presets.append((name, states.payload(default, comp, name, ctrl)))
+            groups[name] = group
+        return presets, groups, unreadable
+
+    def _settled(self, p, found, presets, verdicts):
+        """Most presets failed when read back at once. Capture the default again and try a
+        sample with SETTLE seconds each; when clearly more of them pass, check the whole set
+        that way. Returns everything build_one needs from the better run, or None."""
+        s = self._session()
+        self.events("phase", p, "Giving the plug-in a moment to apply each preset")
+        cap = s.capture(p.fx, settle=self.SETTLE)
+        try:
+            default = states.parse_state(states.chunk_state(cap.get("STATE", "").split("|")))
+        except ValueError:
+            return None
+        ini_file, default_pv = cap.get("FILE") or "", cap.get("PV", "")
+        if not ini_file:
+            return None
+        new, groups, unreadable = self._presets(found, default)
+        if len(new) != len(presets):
+            return None
+        sample = new[:1 + self.SAMPLE]
+        got = self._verify(p.fx, ini_file, sample, "Trying with time to settle", p, self.SETTLE)
+        tried = self._judge_all(sample, got, default, default_pv)
+        before = sum(v.ok for v in verdicts[1:len(sample)])
+        after = sum(v.ok for v in tried[1:])
+        self.log(f"{p.name}: {before} of {len(sample) - 1} passed at once, {after} with {self.SETTLE:g}s to settle")
+        if after <= before or after < 0.5 * (len(sample) - 1):
+            return None
+        got = self._verify(p.fx, ini_file, new, "Checking", p, self.SETTLE)
+        return (self.SETTLE, cap, default, default_pv, new, groups, unreadable, got,
+                self._judge_all(new, got, default, default_pv))
 
     def _judge_all(self, presets, got, default, default_pv):
         verdicts = []

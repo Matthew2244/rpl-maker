@@ -23,6 +23,7 @@ updating. Names offered: Magpie, Preset Hound, Squirrel, Trove, Hoardling.
     .venv/bin/python -m rplmaker build NAME...   make and check, report at the end (--split N, --once, --min N)
     .venv/bin/python -m rplmaker access          Mac: let macOS ask about folders now
     .venv/bin/python -m rplmaker checker         remake the checking copy of REAPER
+    .venv/bin/python -m rplmaker scan-new        have the checking copy scan plug-ins your REAPER hasn't yet
     .venv/bin/python -m rplmaker --self-test     what a build must be able to do
     ./check.sh                                   tests, compile, a help tag on every control
     .venv/bin/python tools/drive.py OUT [NAME...]   the real window, off-screen, never activated (DRIVE_STOP=s presses Stop)
@@ -135,6 +136,42 @@ the 85 user files are UADx (which Magpie finds no presets for), REAPER's own Rea
 XT's single "default", correctly not counted. A done plug-in is unchecked after every scan
 unless checked by hand knowing it (`checked_anyway` in settings), and Check All Shown skips it.
 Only `inventory.REAPER_RESOURCE` is read, like the plug-in list: a portable REAPER isn't.
+
+**Plug-ins REAPER hasn't scanned yet** (2026-11-25, found with IK Multimedia's instruments,
+installed that day: REAPER hadn't started since, so none of them were in its plug-in list and
+Magpie couldn't see them). The checking copy scans new plug-ins as it starts, like any REAPER.
+So: `inventory.unscanned_files` lists VST3 files in your REAPER's VST3 folders (`vst3_folders`,
+from its reaper.ini or the usual places) that neither list has (names compared by `cache_key`,
+letters and digits only, since the list writes `_` for spaces and dashes; a line REAPER left
+unanswered in *your* list is a plug-in that failed, which REAPER never retries, so it counts as
+known). The copy's list is no longer overwritten at each start: `portable.merge_plugin_lists`
+is your list plus the copy's own finished entries (a line with no answer is dropped, so a scan
+cut short is tried again). `inventory.plugins` reads both lists, yours first; a plug-in only
+the copy has is `unscanned=True`. The copy's list is only read beside your real REAPER
+(`_checker_for`: a test's REAPER never reads it). Starting the copy waits 90 s plus 2 minutes a
+new plug-in, and says which it's scanning (`Session.on_scan`, event `scanning`). File, Scan New
+Plug-ins (`MainFrame.on_scan_new`) and `rplmaker scan-new` (`pipeline.scan_new`) do only that,
+then look for presets again; Look for Presets Again and `list` name what's waiting. On a Mac
+the scan can stop at macOS's folder question (MODO DRUM asked about Desktop, then Documents).
+
+**Plug-ins that apply a preset on a timer** (Hammond B-3X). Chosen and read back at once, the
+plug-in still holds the previous preset (0.3 s wasn't enough; 1 s was). When under half of a
+plug-in's presets pass, `Builder._settled` captures the default again after `SETTLE` (1 s) and
+tries `SAMPLE` (8) presets with 1 s each; if clearly more pass, the whole set and its second
+check run that way. The worker runs every job as a coroutine so `wait` can yield to REAPER
+(CAPTURE and VERIFY take an optional settle in seconds; 0 behaves as before, in the same pass).
+The default must be captured after the wait too: Hammond changes itself a moment after loading.
+
+**IK Multimedia's states** (`compare.py`): inside the VST2-style wrapper (VstW, CcnK/FBCh),
+Hammond B-3X keeps plain XML without JUCE's VC2! header (`_wrapped_xml`), and MODO BASS 2,
+MODO DRUM, Pianoverse and SampleTank 4 keep a binary `juce::ValueTree` (`_juce_tree`, a real
+reader of ValueTree::writeToStream and var::writeToStream, with JUCE's own trailer
+"JUCEPrivateData" allowed after it). Inside a property, XML (text or VC2!) and JUCE base64
+blocks (`juce_base64`, "<size>." then JUCE's alphabet) are opened up when they hold a tree,
+anything after the tree kept as `#rest`. IK's window and panel keys (GuiScale, UIState,
+GuiWidthRatio, GuiHeightRatio) aren't settings. NKS files saved by an older version carry that
+version in the bank header, and `formats._current_wrapper` puts the same chunk under the
+installed version's header when the plug-in id matches and only the version differs.
 
 **The scan cache** (`scan-cache.json` in the support folder): each file's reading kept by
 path, size and modification time; new files read on 8 threads, only the first 64 KB of an
@@ -320,6 +357,12 @@ On an Apple silicon Mac with REAPER 7.85, every preset loaded and judged, checke
 | Unfiltered Audio Zip | NKS, VST2 JUCE chunk, wrapped | 109/115 | the 6 left out use modulators |
 | Pianoteq 9 | NKS, VST2 chunk | 799/800 | controls only: its state names a factory preset |
 | Massive X | NKS | 0/64, not made | correctly refused: its NKS data isn't its VST3 state |
+| Hammond B-3X (IK) | NKS (Freelance Soundlabs), wrapped XML | 391/392; split by folder, 4 libraries | every value, 1 s to settle |
+| MODO BASS 2 (IK) | NKS, binary ValueTree | 280/280 | every value |
+| MODO DRUM (IK) | NKS, binary ValueTree | 111/117 | every value (6 differ in a few drum settings) |
+| SampleTank 4 (IK) | NKS, ValueTree with XML inside | 40/40 sampled of 19,130 | every value; full run not done (about 2 s a preset) |
+| Pianoverse (IK) | NKS | 0/260 | correctly refused: content not installed yet, it saved no instrument |
+| ReSing, Philharmonik 2, UVI Workstation | none usable | not offered | encrypted presets; programs only in the plug-in's own browser |
 
 0.1.2 checked on the Mac with the real window off-screen (`tools/drive.py`, bx_glue 88/88 with
 the copy using the Studio's own plug-in folders) and 28 unit tests, which CI also runs on
@@ -429,6 +472,11 @@ busy); nobody on Windows had got that far, which says how untested it is.
    the bright ones came out at 0.0 after encoding.
 
 ## Not done
+
+- UVI Workstation's soundbank programs and ReSing's presets: a UVI state holds the whole program
+  (a state naming only its ProgramPath loads an empty shell, checked 2026-11-25), and ReSing's
+  .rsp files are encrypted and aren't loaded by naming them in its state. Both would need the
+  plug-in's own browser driven, which this app doesn't do.
 
 - The name; an Intel Mac build; Windows code signing. The sounds haven't been heard on Windows.
 - Testing on Windows with a screen reader and a real REAPER (see Tested).

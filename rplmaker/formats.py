@@ -270,7 +270,7 @@ def make_state(fd: Found, default: dict) -> tuple[bytes, bytes]:
         pc = riff(raw)[b"PCHK"]
         if pc[4:8] == b"VST3":
             _cls, ch = vstpreset_parts(pc[4:])
-            return ch[b"Comp"], ch.get(b"Cont", b"")
+            return _current_wrapper(ch[b"Comp"], dcomp), ch.get(b"Cont", b"")
         return _chunk(pc[4:], dcomp, dctrl)
     if fd.fmt == "fxp":
         size = struct.unpack(">I", raw[56:60])[0]
@@ -289,6 +289,26 @@ def make_state(fd: Found, default: dict) -> tuple[bytes, bytes]:
                 return states.juce_wrap(dcomp, states.vc2(xml)), dctrl
         raise ValueError("this plug-in doesn't keep its settings as XML")
     raise ValueError("unknown format")
+
+
+def _current_wrapper(comp: bytes, dcomp: bytes) -> bytes:
+    """A state saved by an older version of the plug-in, inside the VST2-style wrapper (VstW,
+    CcnK/FBCh bank), carries that version's number in the bank, and some plug-ins refuse a
+    bank from another version and stay at their defaults (IK Multimedia's Hammond B-3X: NKS
+    files saved by 1.3.3, the plug-in 1.3.5). The same chunk goes in under the wrapper the
+    installed version writes. Only when the plug-in id matches and the version is all that
+    differs; anything else is left exactly as the file has it."""
+    if comp[:4] != b"VstW" or dcomp[:4] != b"VstW" or comp == dcomp:
+        return comp
+    try:
+        _h1, head1, chunk, rest1 = states.juce_split(comp)
+        _h2, head2, _c2, _r2 = states.juce_split(dcomp)
+    except ValueError:
+        return comp
+    # bank header: CcnK, size, FBCh, version, fxID, fxVersion, numPrograms, future
+    if head1[16:20] != head2[16:20] or head1[20:24] == head2[20:24] or rest1:
+        return comp
+    return states.juce_wrap(dcomp, chunk)
 
 
 def _chunk(chunk: bytes, dcomp: bytes, dctrl: bytes) -> tuple[bytes, bytes]:

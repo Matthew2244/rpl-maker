@@ -27,6 +27,9 @@ APPDATA = os.environ.get("APPDATA") or os.path.join(HOME, "AppData", "Roaming")
 SUPPORT = (os.path.join(APPDATA, "RPL Maker") if WIN
            else os.path.join(HOME, "Library", "Application Support", "RPL Maker"))
 CACHE = os.path.join(SUPPORT, "scan-cache.json")
+# The checking copy of REAPER (portable.py makes it). Its own plug-in list can hold plug-ins
+# your REAPER hasn't scanned yet: the copy scans anything new when it starts.
+CHECKER_DIR = os.path.join(SUPPORT, "checking-reaper")
 CACHE_VERSION = 2   # 2: Found carries the maker's category (0.2.0)
 
 
@@ -96,6 +99,7 @@ class Plugin:
     instrument: bool
     presets: dict = field(default_factory=dict)   # format -> [Found]
     in_reaper: object = None   # inreaper.InReaper: REAPER's own presets file for it, if any
+    unscanned: bool = False    # your REAPER hasn't scanned it yet; only the checking copy has
 
     @property
     def vst2(self) -> str | None:
@@ -153,29 +157,117 @@ def split_display(display: str) -> tuple[str, str]:
         s = s[:i].rstrip()
         if not re.fullmatch(r"\d+ ?(out|ch)|\d+->\d+ ?ch|x86_64|arm64", g, re.I):
             vendor = g
+    # REAPER puts the architecture of a bridged plug-in before the maker:
+    # "Philharmonik 2 (x86_64) (IK Multimedia) (32 out)"
+    s = re.sub(r"\s*\((x86_64|arm64|i386|x86)\)$", "", s, flags=re.I)
     return s or display, vendor
 
 
-def plugins(resource: str = REAPER_RESOURCE) -> list[Plugin]:
-    path = cache_file(resource)
-    if not path:
-        return []
+CACHE_LINE = re.compile(r"^(.+?\.vst3)=[^,]*,[^{,]*\{([0-9A-Fa-f]{32}),(.*)$")
+
+
+def _checker_for(resource: str, checker):
+    """The checking copy only stands beside your own REAPER (a test's REAPER has none)."""
+    if checker == "auto":
+        return CHECKER_DIR if os.path.abspath(resource) == os.path.abspath(REAPER_RESOURCE) else None
+    return checker
+
+
+def plugins(resource: str = REAPER_RESOURCE, checker: str | None = "auto") -> list[Plugin]:
+    """Every VST3 plug-in in your REAPER's plug-in list, then any the checking copy has scanned
+    that your REAPER hasn't yet (a plug-in installed since REAPER last started). Those are
+    marked `unscanned`: their libraries work in your REAPER once it has scanned them."""
     out, seen = [], set()
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            m = re.match(r"^(.+?\.vst3)=[^,]*,[^{,]*\{([0-9A-Fa-f]{32}),(.*)$", line.rstrip("\n"))
-            if not m:
-                continue
-            bundle, cls, display = m.group(1), m.group(2).upper(), m.group(3)
-            instrument = display.endswith("!!!VSTi")
-            display = display.split("!!!")[0]
-            if not display or cls in seen:
-                continue
-            seen.add(cls)
-            name, vendor = split_display(display)
-            out.append(Plugin(("VST3i: " if instrument else "VST3: ") + display, name, vendor, cls, bundle, instrument))
+    checker = _checker_for(resource, checker)
+    sources = [(cache_file(resource), False)]
+    if checker and os.path.abspath(checker) != os.path.abspath(resource):
+        sources.append((cache_file(checker), True))
+    for path, extra in sources:
+        if not path:
+            continue
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = CACHE_LINE.match(line.rstrip("\n"))
+                if not m:
+                    continue
+                bundle, cls, display = m.group(1), m.group(2).upper(), m.group(3)
+                instrument = display.endswith("!!!VSTi")
+                display = display.split("!!!")[0]
+                if not display or cls in seen:
+                    continue
+                seen.add(cls)
+                name, vendor = split_display(display)
+                out.append(Plugin(("VST3i: " if instrument else "VST3: ") + display, name, vendor, cls, bundle,
+                                  instrument, unscanned=extra))
     out.sort(key=lambda p: (p.name.lower(), p.vendor.lower()))   # rows read name first, so sort by it
     return out
+
+
+def cache_key(file_name: str) -> str:
+    """A plug-in file's name as REAPER's plug-in list writes it, made comparable: the list puts
+    `_` for spaces and dashes ("MODO DRUM.vst3" is "MODO_DRUM.vst3"), so only letters and
+    digits are compared, without case."""
+    return norm(file_name)
+
+
+def listed_files(resource: str, finished_only: bool = False) -> set:
+    """The plug-in files a REAPER's plug-in list has an entry for. REAPER writes a file's line
+    before loading it and fills it in once the plug-in has answered; a line left without an
+    answer is a plug-in that failed (REAPER doesn't try it again) or a scan that was cut short.
+    `finished_only` keeps just the answered ones."""
+    out = set()
+    path = cache_file(resource)
+    if path:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                k, sep, v = line.rstrip("\n").partition("=")
+                if sep and not k.startswith("[") and ("," in v or not finished_only):
+                    out.add(cache_key(k))
+    return out
+
+
+def vst3_folders(resource: str = REAPER_RESOURCE) -> list[str]:
+    """The folders your REAPER looks in for VST3 plug-ins: its own setting when you've made one,
+    else the usual places."""
+    arch = "vstpath_arm64" if platform.machine().lower() in ("arm64", "aarch64") else "vstpath64"
+    value = None
+    try:
+        with open(os.path.join(resource, "reaper.ini"), encoding="utf-8", errors="replace") as f:
+            section = ""
+            for line in f:
+                line = line.strip()
+                if line.startswith("["):
+                    section = line.lower()
+                elif section == "[reaper]" and line.partition("=")[0] in (arch, "vstpath64") and \
+                        line.partition("=")[2].strip():
+                    if line.startswith(arch + "=") or value is None:
+                        value = line.partition("=")[2].strip()
+    except OSError:
+        pass
+    if not value:
+        value = (os.path.join(os.environ.get("CommonProgramFiles", r"C:\Program Files\Common Files"), "VST3")
+                 if WIN else "/Library/Audio/Plug-Ins/VST3;~/Library/Audio/Plug-Ins/VST3")
+    return [os.path.expanduser(os.path.expandvars(p.strip())) for p in value.split(";") if p.strip()]
+
+
+def unscanned_files(resource: str = REAPER_RESOURCE, checker: str | None = "auto") -> list[str]:
+    """VST3 plug-ins on disk that neither your REAPER nor the checking copy has scanned: the copy
+    scans them as it starts, which can take a while (and on a Mac a plug-in may make macOS ask
+    about a folder). Full paths, sorted."""
+    checker = _checker_for(resource, checker)
+    # the copy's unanswered lines aren't handed back to it (portable.merge_plugin_lists)
+    known = listed_files(resource) | (listed_files(checker, finished_only=True) if checker else set())
+    out = []
+    for folder in vst3_folders(resource):
+        if not os.path.isdir(folder):
+            continue
+        for dp, dn, fn in os.walk(folder):
+            for n in list(dn) + fn:
+                if n.lower().endswith(".vst3"):
+                    if cache_key(n) not in known:
+                        out.append(os.path.join(dp, n))
+            dn[:] = [d for d in dn if not d.lower().endswith(".vst3")]   # a bundle is one plug-in
+    return sorted(set(out))
 
 
 def norm(s: str) -> str:

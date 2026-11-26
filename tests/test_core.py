@@ -102,6 +102,9 @@ class Naming(unittest.TestCase):
                          ("UADx 1176", "Universal Audio (UADx)"))
         self.assertEqual(inventory.split_display("Addictive Drums 2 (XLN Audio) (18 out)"),
                          ("Addictive Drums 2", "XLN Audio"))
+        # a bridged Intel plug-in: REAPER puts the architecture before the maker
+        self.assertEqual(inventory.split_display("Philharmonik 2 (x86_64) (IK Multimedia) (32 out)"),
+                         ("Philharmonik 2", "IK Multimedia"))
 
     def test_preset_names_folders(self):
         F = formats.Found
@@ -662,3 +665,166 @@ class Organizing(unittest.TestCase):
             self.assertEqual(stats["renamed"], 0)
             with self.assertRaises(ValueError):
                 organize.organize_folder(src, os.path.join(src, "inside"), [])
+
+
+class NotScannedYet(unittest.TestCase):
+    """Plug-ins installed since REAPER last started aren't in its plug-in list. The checking
+    copy scans them, keeps what it found, and they're offered like any other."""
+
+    YOURS = ("[vstcache]\n"
+             "Ozone.vst3=00AA,123{" + "A" * 32 + ",Ozone (iZotope)\n"
+             "Broken_Thing.vst3=00BB\n")     # REAPER tried it and it failed: never tried again
+    COPYS = ("[vstcache]\n"
+             "Ozone.vst3=00AA,123{" + "A" * 32 + ",Ozone (iZotope)\n"
+             "MODO_DRUM.vst3=00CC,456{" + "B" * 32 + ",MODO DRUM (IK Multimedia)!!!VSTi\n"
+             "Hammond_B_3X.vst3=00DD\n")     # the copy was cut off mid-scan: try it again
+
+    def _dirs(self):
+        root = tempfile.mkdtemp()
+        yours, copy, vst3 = (os.path.join(root, n) for n in ("yours", "copy", "VST3"))
+        for d in (yours, copy, vst3):
+            os.makedirs(d)
+        with open(os.path.join(yours, "reaper-vstplugins64.ini"), "w") as f:
+            f.write(self.YOURS)
+        with open(os.path.join(copy, "reaper-vstplugins64.ini"), "w") as f:
+            f.write(self.COPYS)
+        with open(os.path.join(yours, "reaper.ini"), "w") as f:
+            f.write(f"[REAPER]\nvstpath64={vst3}\nvstpath_arm64={vst3}\n")
+        for b in ("Ozone.vst3", "Broken Thing.vst3", "MODO DRUM.vst3", "Hammond B-3X.vst3", "SampleTank 4.vst3"):
+            os.makedirs(os.path.join(vst3, b, "Contents"))
+        return yours, copy
+
+    def test_merge_keeps_only_finished_scans_of_the_copy(self):
+        from rplmaker import portable
+        text = portable.merge_plugin_lists(self.YOURS, self.COPYS)
+        self.assertTrue(text.startswith(self.YOURS))
+        self.assertIn("MODO_DRUM.vst3=00CC", text)
+        self.assertNotIn("Hammond_B_3X", text)
+        self.assertEqual(text.count("Ozone.vst3="), 1)
+
+    def test_plugins_the_copy_scanned_are_offered_and_marked(self):
+        yours, copy = self._dirs()
+        plugs = {p.name: p for p in inventory.plugins(yours, checker=copy)}
+        self.assertFalse(plugs["Ozone"].unscanned)
+        self.assertTrue(plugs["MODO DRUM"].unscanned)
+        self.assertTrue(plugs["MODO DRUM"].instrument)
+        self.assertNotIn("MODO DRUM", {p.name for p in inventory.plugins(yours, checker=None)})
+
+    def test_unscanned_files(self):
+        yours, copy = self._dirs()
+        names = [os.path.basename(p) for p in inventory.unscanned_files(yours, checker=copy)]
+        # failed in yours: not again; scanned by the copy: done; cut short in the copy: again
+        self.assertEqual(names, ["Hammond B-3X.vst3", "SampleTank 4.vst3"])
+
+    def test_a_test_reaper_never_reads_the_real_checking_copy(self):
+        yours, _copy = self._dirs()
+        self.assertIsNone(inventory._checker_for(yours, "auto"))
+
+
+def _cint(n: int) -> bytes:
+    b = abs(n).to_bytes(max(1, (abs(n).bit_length() + 7) // 8), "little")
+    return bytes([len(b) | (0x80 if n < 0 else 0)]) + b
+
+
+def _vt(name: str, props: dict, kids=()) -> bytes:
+    """A juce::ValueTree as ValueTree::writeToStream writes it (enough types for the tests)."""
+    out = name.encode() + b"\x00" + _cint(len(props))
+    for k, v in props.items():
+        out += k.encode() + b"\x00"
+        if isinstance(v, bool):
+            out += _cint(1) + bytes([2 if v else 3])
+        elif isinstance(v, int):
+            out += _cint(5) + b"\x01" + struct.pack("<i", v)
+        elif isinstance(v, float):
+            out += _cint(9) + b"\x04" + struct.pack("<d", v)
+        elif isinstance(v, bytes):
+            out += _cint(len(v) + 1) + b"\x08" + v
+        else:
+            data = v.encode() + b"\x00"
+            out += _cint(len(data) + 1) + b"\x05" + data
+    out += _cint(len(kids))
+    for k in kids:
+        out += k
+    return out
+
+
+def _juce_b64(data: bytes) -> str:
+    alpha = ".ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+"
+    bits = "".join(format(b, "08b")[::-1] for b in data)
+    chars = [alpha[int(bits[i:i + 6].ljust(6, "0")[::-1], 2)] for i in range(0, len(bits), 6)]
+    return f"{len(data)}." + "".join(chars)
+
+
+def _vst2_wrapped(chunk: bytes, version: int = 1, fxid: bytes = b"Hamm") -> bytes:
+    head = b"FBCh" + struct.pack(">I", 2) + fxid + struct.pack(">II", version, 1) + b"\x00" * 128
+    body = head + struct.pack(">I", len(chunk)) + chunk
+    return b"VstW" + struct.pack(">III", 8, 1, 0) + b"CcnK" + struct.pack(">I", len(body)) + body
+
+
+class IKStates(unittest.TestCase):
+    """IK Multimedia's VST3 states: plain XML or a binary juce::ValueTree inside the VST2-style
+    wrapper, and banks that carry the version of the plug-in that saved them."""
+
+    def test_wrapped_plain_xml_is_read(self):
+        comp = _vst2_wrapped(b'<?xml version="1.0"?>\r\n<State><Model Drawbar1="8.0" Split="1.0"/></State>')
+        name, vals = compare.decode(comp)
+        self.assertEqual(name, "wrapped XML")
+        self.assertEqual(vals["State/Model[1]@Split"], "1.0")
+
+    def test_value_tree_with_blocks_inside(self):
+        amp = _vt("AmpTubeState", {"Gain": 0.5}) + b"\x01\x02\x03\x04" * 2   # a tree, then raw floats
+        tree = _vt("AppState", {"BPM": 90.0, "Model": "P-Bass", "Muted": True, "Strings": 4,
+                                "AmpNode": _juce_b64(amp), "GuiScale": "1.0"},
+                   [_vt("Child", {"Level": -3.0})])
+        comp = _vst2_wrapped(tree + b"\x00" * 8 + b"JUCEPrivateData\x00\x01\x01Bypass\x00")
+        name, vals = compare.decode(comp)
+        self.assertEqual(name, "JUCE ValueTree")
+        self.assertEqual(vals["AppState@BPM"], 90.0)
+        self.assertEqual(vals["AppState@Model"], "P-Bass")
+        self.assertIs(vals["AppState@Muted"], True)
+        self.assertEqual(vals["AppState/Child@Level"], -3.0)
+        self.assertEqual(vals["AppState@AmpNode/AmpTubeState@Gain"], 0.5)
+        self.assertNotIn("AppState@AmpNode#rest", vals)   # memory left after the tree, not a setting
+        self.assertNotIn("AppState@GuiScale", vals)   # window size isn't a setting
+
+    def test_value_tree_differences_are_found(self):
+        a = _vst2_wrapped(_vt("AppState", {"BPM": 90.0, "Model": "P-Bass"}))
+        b = _vst2_wrapped(_vt("AppState", {"BPM": 90.0, "Model": "J-Bass"}))
+        A, B = compare.decode(a)[1], compare.decode(b)[1]
+        self.assertIsNone(compare.same(A["AppState@Model"], B["AppState@Model"]))
+
+    def test_juce_base64_round_trip(self):
+        for data in (b"", b"\x00", b"hello world", bytes(range(256))):
+            self.assertEqual(compare.juce_base64(_juce_b64(data)), data)
+        self.assertIsNone(compare.juce_base64("not.base64!"))
+
+    def test_older_version_bank_goes_in_under_the_current_wrapper(self):
+        chunk = b"<State><Model Drawbar1='8.0'/></State>"
+        old = _vst2_wrapped(chunk, version=0x10303)
+        cur = _vst2_wrapped(b"<State/>", version=0x10305)
+        got = formats._current_wrapper(old, cur)
+        self.assertEqual(states.juce_split(got)[2], chunk)
+        self.assertEqual(states.juce_split(got)[1][20:24], struct.pack(">I", 0x10305))
+        # another plug-in's bank, or the same version: left exactly as the file has it
+        self.assertEqual(formats._current_wrapper(_vst2_wrapped(chunk, 0x10303, b"Othr"), cur),
+                         _vst2_wrapped(chunk, 0x10303, b"Othr"))
+        same = _vst2_wrapped(chunk, version=0x10305)
+        self.assertEqual(formats._current_wrapper(same, cur), same)
+        self.assertEqual(formats._current_wrapper(b"not wrapped", cur), b"not wrapped")
+
+    def test_windows_paths_and_build_numbers_are_not_differences(self):
+        self.assertEqual(compare.same("Instruments\\50__Piano\\Grand.st3i", "Instruments/50__Piano/Grand.st3i"), "same")
+        self.assertIsNone(compare.same("Instruments\\Grand.st3i", "Instruments/Upright.st3i"))
+        xml = b"<Multi><BuildVersion>(%s)</BuildVersion><Gain>1</Gain></Multi>"
+        a = _vst2_wrapped(_vt("State", {"Plugin": compare.states.vc2(xml % b"22L13")}))
+        b = _vst2_wrapped(_vt("State", {"Plugin": compare.states.vc2(xml % b"25F27")}))
+        self.assertEqual(compare.decode(a)[1], compare.decode(b)[1])
+
+    def test_wording(self):
+        words = pipeline.unscanned_words(["MODO DRUM"])
+        self.assertIn("1 plug-in your REAPER hasn't scanned yet, so its presets", words)
+        self.assertIn("File, Scan New Plug-ins", words)
+        self.assertIn("rplmaker scan-new", pipeline.unscanned_words(["A", "B"], how="rplmaker scan-new"))
+        done = pipeline.scan_new_words(["MODO DRUM"], ["Broken"])
+        self.assertIn("Scanned MODO DRUM.", done)
+        self.assertIn("Broken didn't answer the checking copy, so it can't be offered yet", done)

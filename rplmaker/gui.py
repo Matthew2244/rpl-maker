@@ -299,6 +299,9 @@ class MainFrame(wx.Frame):
         self.mi_stop = m.Append(wx.ID_ANY, "Stop\t" + K["stop"], "Stop now; libraries already made are kept")
         m.AppendSeparator()
         mi_scan = m.Append(wx.ID_ANY, "Look for Presets Again\t" + K["scan"], "Look for plug-ins and presets again")
+        self.mi_scan_new = m.Append(wx.ID_ANY, "Scan New Plug-ins...",
+                                    "Have the checking copy of REAPER scan plug-ins your REAPER hasn't scanned yet, "
+                                    "so their presets can be offered; your REAPER isn't changed")
         self.mi_access = m.Append(wx.ID_ANY, f"{ACCESS_VERB} Folder Access...",
                                   "Check that every preset folder can be read and libraries can be saved"
                                   if WIN else "Let macOS ask now whether the checking copy may open your folders")
@@ -343,6 +346,7 @@ class MainFrame(wx.Frame):
         B(wx.EVT_MENU, lambda e: self.on_make(), self.mi_make)
         B(wx.EVT_MENU, lambda e: self.on_stop(), self.mi_stop)
         B(wx.EVT_MENU, lambda e: self.scan(), mi_scan)
+        B(wx.EVT_MENU, lambda e: self.on_scan_new(), self.mi_scan_new)
         if self.mi_access:
             B(wx.EVT_MENU, lambda e: self.on_access(), self.mi_access)
         B(wx.EVT_MENU, lambda e: self.on_folder(), mi_folder)
@@ -381,6 +385,7 @@ class MainFrame(wx.Frame):
         self.mi_make.Enable(idle)
         if self.mi_access:
             self.mi_access.Enable(idle)
+        self.mi_scan_new.Enable(idle)
         self.mi_organize.Enable(idle)
         self.b_stop.Enable(self.busy == "build")
         self.mi_stop.Enable(self.busy == "build")
@@ -486,7 +491,8 @@ class MainFrame(wx.Frame):
         if self.busy:
             say({"build": "Libraries are being made. Look for presets again when the run is done.",
                  "access": "Folder access is being checked. Look for presets again when that's done.",
-                 "organize": "Libraries are being organized. Look for presets again when that's done."}
+                 "organize": "Libraries are being organized. Look for presets again when that's done.",
+                 "scan_new": "New plug-ins are being scanned. Presets are looked for again when that's done."}
                 .get(self.busy, "Already looking for presets."), polite=False)
             return
         self.busy = "scan"
@@ -538,6 +544,10 @@ class MainFrame(wx.Frame):
             if in_reaper:
                 words += (f" {in_reaper} of them {'is' if in_reaper == 1 else 'are'} already in REAPER's own "
                           "presets, so left unchecked.")
+        if not err and plugs:
+            new = inventory.unscanned_files()
+            if new:   # installed since REAPER last started: offer the scan rather than hide them
+                words += " " + pipeline.unscanned_words([os.path.splitext(os.path.basename(f))[0] for f in new])
         self.set_progress(words, 1)
         self.refill()
         if first and self.shown and wx.Window.FindFocus() in (None, self.find):
@@ -602,6 +612,8 @@ class MainFrame(wx.Frame):
                     told_waiting[0] = True
                     wx.CallAfter(self.cue, "waiting", words, False)
                 wx.CallAfter(self.set_progress, f"{p.name}: waiting. " + words, None)
+            elif kind == "scanning":
+                wx.CallAfter(self.set_progress, pipeline.scanning_words(a[0]), None)
             elif kind == "result":
                 r = a[0]
                 done_before[0] += r.plugin.count + 1
@@ -749,6 +761,43 @@ class MainFrame(wx.Frame):
                 after = None
             wx.CallAfter(self.access_done, words, after)
         threading.Thread(target=work, daemon=True).start()
+
+    def on_scan_new(self):
+        """File, Scan New Plug-ins: the checking copy scans what your REAPER hasn't, then presets
+        are looked for again, so the new plug-ins show in the list."""
+        if self.busy:
+            return
+        if not inventory.unscanned_files():
+            say("Every plug-in in your REAPER's plug-in folders has been scanned already.", polite=False)
+            return
+        self.busy = "scan_new"
+        self._enable()
+        self.set_progress("Starting the checking copy of REAPER to scan new plug-ins.", None)
+
+        def events(kind, names):
+            words = pipeline.scanning_words(names)
+            wx.CallAfter(self.set_progress, words, None)
+            wx.CallAfter(self.cue, "waiting", words, False)
+
+        def work():
+            try:
+                if portable.status() != "ready":
+                    portable.make()
+                done, left = pipeline.scan_new(events=events)
+                words = pipeline.scan_new_words(done, left) or "Nothing new to scan."
+            except Exception as ex:  # noqa: BLE001
+                words = "Couldn't scan the new plug-ins: " + str(ex)
+            wx.CallAfter(self.scan_new_done, words)
+        threading.Thread(target=work, daemon=True).start()
+
+    def scan_new_done(self, words):
+        if not self:
+            return
+        self.busy = None
+        self._enable()
+        self.set_progress(words, 1)
+        say(words, polite=False)
+        wx.CallLater(2500, self.scan)   # after the sentence: the list then shows them
 
     def access_folders(self) -> tuple[list[str], list[str]]:
         """(every folder presets were found in, plus the usual places), (the person's own extra

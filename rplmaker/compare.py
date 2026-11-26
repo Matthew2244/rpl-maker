@@ -9,7 +9,10 @@ known, into named values and compared value by value:
   Brainworx   "Pmtr" blocks of tagged floats (Plugin Alliance)
   JUCE XML    VC2! XML inside the VST3 wrapper, attribute by attribute
   ValueTree   JUCE binary PARAM entries (Bettermaker)
-  XML         any state that is plain XML
+  ValueTree   any JUCE ValueTree in its binary form, property by property, with XML inside a
+              property opened up (IK Multimedia's MODO, Pianoverse, SampleTank)
+  XML         any state that is plain XML, as it stands or inside the VST2-style wrapper
+              without JUCE's VC2! header (IK Multimedia)
 
 A plug-in that re-saves in a newer format may add or drop keys; only the values both sides
 hold count, and at least 95% of the file's current values must come back. A value snapping
@@ -34,8 +37,17 @@ from . import states
 UI_ONLY = {"isModulationVisible", "instanceSerial", "pluginVersion", "presetName", "uiWidth", "uiHeight",
            "minimize", "minimized", "BuildDate", "Version", "PresetName", "PresetSaveName",
            "PresetMidiOrigin", "editorWidth", "editorHeight", "lastPresetName", "currentPreset",
-           "presetDirty", "windowWidth", "windowHeight", "zoom", "scale"}
-IGNORE_PARTS = ("/Active Band", "/Context State/", "Preset State/Extra Bytes", "/Analytics", "analytics")
+           "presetDirty", "windowWidth", "windowHeight", "zoom", "scale",
+           # IK Multimedia: window size and panel layout
+           "GuiScale", "GuiWidthRatio", "GuiHeightRatio", "UIState",
+           # IK Multimedia: the name of the preset last chosen in the plug-in's own browser
+           "_preset_name", "_preset_is_consisten", "_preset_is_consistent",
+           # which build of the plug-in saved it (SampleTank 4)
+           "BuildVersion"}
+IGNORE_PARTS = ("/Active Band", "/Context State/", "Preset State/Extra Bytes", "/Analytics", "analytics",
+                "/UIState/",
+                # SampleTank 4's strummer: whether it was playing when saved, not a setting
+                "/Strummer[1]/CurrentState[1]/Play")
 
 
 # ---- decoders: state bytes -> {key: value} -----------------------------------------------
@@ -124,6 +136,171 @@ def _valuetree(comp):
     return d or None
 
 
+def _cint(b: bytes, i: int):
+    """JUCE's OutputStream::writeCompressedInt: a byte giving how many bytes follow (0x80 set
+    for a negative number), then those bytes, low first."""
+    n = b[i]
+    k = n & 0x7f
+    if k > 4:
+        raise ValueError("bad compressed int")
+    v = int.from_bytes(b[i + 1:i + 1 + k], "little")
+    return (-v if n & 0x80 else v), i + 1 + k
+
+
+def _cstr(b: bytes, i: int):
+    j = b.index(b"\x00", i)
+    return b[i:j].decode("utf-8", "replace"), j + 1
+
+
+def _jvar(b: bytes, i: int):
+    """One juce::var as var::writeToStream writes it: size (type byte included), type, data."""
+    size, i = _cint(b, i)
+    if size == 0:
+        return None, i
+    t, data, end = b[i], b[i + 1:i + size], i + size
+    if end > len(b):
+        raise ValueError("var runs past the end")
+    if t == 1:
+        return struct.unpack("<i", data[:4])[0], end
+    if t in (2, 3):
+        return t == 2, end
+    if t == 4:
+        return struct.unpack("<d", data[:8])[0], end
+    if t == 5:
+        return data.rstrip(b"\x00").decode("utf-8", "replace"), end
+    if t == 6:
+        return struct.unpack("<q", data[:8])[0], end
+    if t == 7:
+        n, j = _cint(b, i + 1)
+        items = []
+        for _ in range(n):
+            v, j = _jvar(b, j)
+            items.append(v)
+        return items, end
+    if t == 8:
+        return bytes(data), end
+    if t == 9:
+        return None, end
+    raise ValueError(f"var type {t}")
+
+
+_TREE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_ .:-]{0,127}$")   # a ValueTree type or property name
+
+
+def _tree(b: bytes, i: int, path: str, out: dict, depth: int = 0):
+    """ValueTree::writeToStream: type name, properties, children."""
+    if depth > 64:
+        raise ValueError("too deep")
+    name, i = _cstr(b, i)
+    if not _TREE_NAME.match(name):
+        raise ValueError("not a ValueTree")
+    here = f"{path}/{name}" if path else name
+    n, i = _cint(b, i)
+    if n < 0 or n > 100000:
+        raise ValueError("not a ValueTree")
+    for _ in range(n):
+        key, i = _cstr(b, i)
+        if not _TREE_NAME.match(key):
+            raise ValueError("not a ValueTree")
+        v, i = _jvar(b, i)
+        if key in UI_ONLY:
+            continue
+        _flat_value(f"{here}@{key}", v, out)
+    kids, i = _cint(b, i)
+    if kids < 0 or kids > 100000:
+        raise ValueError("not a ValueTree")
+    seen = collections.Counter()
+    for _ in range(kids):
+        j = b.index(b"\x00", i)
+        tag = b[i:j].decode("utf-8", "replace")
+        seen[tag] += 1
+        i = _tree(b, i, f"{here}[{seen[tag]}]" if seen[tag] > 1 else here, out, depth + 1)
+    return i
+
+
+JUCE_B64 = ".ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+"
+_JB64 = re.compile(r"^(\d{1,9})\.([.A-Za-z0-9+]*)$")
+
+
+def juce_base64(text: str) -> bytes | None:
+    """JUCE's MemoryBlock::toBase64Encoding ("<size>." then six bits a character, low bit
+    first, in its own alphabet), as plug-ins store a block of binary inside a property."""
+    m = _JB64.match(text.strip())
+    if not m:
+        return None
+    size = int(m.group(1))
+    if size > 64 * 1024 * 1024 or len(m.group(2)) * 6 < size * 8:
+        return None
+    out = bytearray(size)
+    pos = 0
+    for ch in m.group(2):
+        v = JUCE_B64.index(ch)
+        for i in range(6):
+            if pos >= size * 8:
+                break
+            if v >> i & 1:
+                out[pos >> 3] |= 1 << (pos & 7)
+            pos += 1
+    return bytes(out)
+
+
+def _flat_value(key: str, v, out: dict):
+    """A property's value; XML held inside one (as text, or JUCE's VC2! binary) is opened up so
+    its settings are compared one by one, anything else is compared whole."""
+    if isinstance(v, bytes) and v[:4] == b"VC2!":
+        n = struct.unpack("<I", v[4:8])[0]
+        try:
+            for k2, v2 in _xml_values(v[8:8 + n]).items():
+                out[f"{key}/{k2}"] = v2
+            return
+        except ET.ParseError:
+            pass
+    if isinstance(v, str) and v.lstrip().startswith("<"):
+        try:
+            for k2, v2 in _xml_values(v.encode("utf-8")).items():
+                out[f"{key}/{k2}"] = v2
+            return
+        except ET.ParseError:
+            pass
+    if isinstance(v, str) and _JB64.match(v):
+        blob = juce_base64(v)
+        if blob is not None:   # a block inside a property: open it up when it's a tree or XML too
+            inner: dict = {}
+            try:
+                end = _tree(blob, 0, "", inner)
+                if inner and end >= 16:   # names are checked, so a short tree is still a tree
+                    for k2, v2 in inner.items():
+                        out[f"{key}/{k2}"] = v2
+                    # what follows the tree is left alone: IK's blocks carry whatever was in
+                    # memory after it, different every save (MODO BASS 2)
+                    return
+            except (ValueError, IndexError, struct.error):
+                pass
+            _flat_value(key, blob, out)
+            return
+    if isinstance(v, list):
+        for n, x in enumerate(v):
+            _flat_value(f"{key}[{n}]", x, out)
+        return
+    out[key] = v
+
+
+def _juce_tree(comp):
+    """A juce::ValueTree in its binary form (writeToStream), as it stands or as the chunk inside
+    the VST2-style VST3 wrapper: IK Multimedia's MODO BASS 2, MODO DRUM, Pianoverse and
+    SampleTank 4. Every property by path; XML inside a property is opened up too."""
+    chunk = states.juce_split(comp)[2] if comp[:4] == b"VstW" else comp
+    if not chunk or chunk[:1] in (b"<", b"\x00") or chunk[:4] == b"VC2!":
+        return None
+    out: dict = {}
+    end = _tree(chunk, 0, "", out)
+    tail = chunk[end:]
+    # JUCE's VST3 wrapper adds its own block (bypass state) after the plug-in's data
+    if len(tail.rstrip(b"\x00")) > 16 and b"JUCEPrivateData" not in tail:
+        return None   # mostly unread: not a ValueTree after all
+    return out or None
+
+
 def _plain_xml(comp):
     s = comp.lstrip(b"\xef\xbb\xbf").lstrip()
     if not s.startswith(b"<"):
@@ -132,8 +309,16 @@ def _plain_xml(comp):
     return _xml_values(s[:end + 1])
 
 
+def _wrapped_xml(comp):
+    """Plain XML as the chunk inside the VST2-style VST3 wrapper (VstW, then a CcnK/FBCh bank),
+    without JUCE's VC2! header: IK Multimedia (Hammond B-3X, MODO BASS 2, MODO DRUM)."""
+    if comp[:4] != b"VstW":
+        return None
+    return _plain_xml(states.juce_split(comp)[2])
+
+
 DECODERS = [("iZotope", _iz), ("Brainworx", _pmtr), ("JUCE XML", _juce_xml), ("ValueTree", _valuetree),
-            ("XLN", _xln), ("XML", _plain_xml)]
+            ("XLN", _xln), ("XML", _plain_xml), ("wrapped XML", _wrapped_xml), ("JUCE ValueTree", _juce_tree)]
 
 
 def decode(comp: bytes):
@@ -167,6 +352,11 @@ def same(a, b) -> str | None:
     """'same', 'rounded' (a control-step snap) or None when the values differ."""
     if a == b:
         return "same"
+    # a file path saved on Windows reads back with the Mac's separators (SampleTank 4's NKS
+    # files were made on Windows: "Instruments\\50__Miroslav..." comes back "Instruments/50__...")
+    if isinstance(a, str) and isinstance(b, str) and ("\\" in a or "\\" in b) \
+            and a.replace("\\", "/") == b.replace("\\", "/"):
+        return "same"
     x, y = _num(a), _num(b)
     if x is None or y is None:
         return None
@@ -189,8 +379,12 @@ def pretty_key(key) -> str:
 def short(v) -> str:
     if isinstance(v, tuple):
         v = v[1]
-    if isinstance(v, bytes):
-        v = v.decode("latin-1")
+    if v is None or v == "" or v == b"":
+        return "nothing"
+    if isinstance(v, bytes):   # read aloud, a block of binary is noise: say how big it is
+        return f"a block of {len(v):,} bytes" if not v.isascii() or b"\x00" in v else short(v.decode("ascii"))
+    if isinstance(v, str) and len(v) > 24 and (_JB64.match(v) or not any(c == " " for c in v)):
+        return f"a block of {len(v):,} characters"
     x = _num(v)
     if x is not None and not isinstance(v, bool):
         return f"{x:.4g}"

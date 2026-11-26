@@ -139,6 +139,20 @@ presets don't load in the VST3 version. It reads the presets folder in REAPER's 
 it reads REAPER's plug-in list from; a portable REAPER isn't looked at. REAPER's files are only
 read, never changed.
 
+## Plug-ins REAPER hasn't scanned yet
+
+Magpie learns which plug-ins you have from REAPER's own list, and REAPER only adds a plug-in to
+that list when it starts and scans it. So a plug-in installed since REAPER last started isn't
+there yet. When Magpie finds plug-ins like that in your plug-in folders, it says how many after
+Look for Presets Again, and names them.
+
+File, Scan New Plug-ins has the checking copy of REAPER scan them. Your REAPER and its list
+aren't changed; the copy keeps what it found in its own list. Then they show up like any other
+plug-in. A big instrument can take a minute or more to scan, and on a Mac a plug-in may make
+macOS ask whether REAPER for checking presets can open a folder: choose Allow. From the command
+line it's `rplmaker scan-new`. Libraries made for these plug-ins work in your REAPER once it has
+scanned them too, which it does the next time it starts.
+
 ## Keeping presets organized
 
 REAPER shows a plug-in's presets as one list, sorted by name. It has no folders or submenus

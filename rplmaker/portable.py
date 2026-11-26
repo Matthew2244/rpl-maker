@@ -28,7 +28,7 @@ from . import inventory
 
 WIN = inventory.WIN
 SUPPORT = inventory.SUPPORT
-COPY_DIR = os.path.join(SUPPORT, "checking-reaper")
+COPY_DIR = inventory.CHECKER_DIR
 APP_NAME = "REAPER for checking presets"
 EXE = "REAPERCheck"
 BUNDLE_ID = "com.cockos.reaper.rplmaker-check"
@@ -307,15 +307,53 @@ def _make(copy_dir, src, resource, say) -> None:
     say("Ready")
 
 
+def merge_plugin_lists(yours: str, copys: str) -> str:
+    """The copy's plug-in list: yours as it is today, so the copy has nothing to scan that your
+    REAPER already has, plus the entries the copy made itself for plug-ins your REAPER hasn't
+    scanned yet (finished scans only: a line with no answer from the plug-in is left out, so the
+    copy tries it again). Without that it would scan them again at every start."""
+    out = yours.rstrip("\n").split("\n") if yours.strip() else ["[vstcache]"]
+    have = {inventory.cache_key(l.partition("=")[0]) for l in out if "=" in l}
+    in_cache = False
+    for line in copys.split("\n"):
+        if line.startswith("["):
+            in_cache = line.strip().lower() == "[vstcache]"
+            continue
+        k, sep, v = line.partition("=")
+        if in_cache and sep and "," in v and inventory.cache_key(k) not in have:
+            out.append(line)
+            have.add(inventory.cache_key(k))
+    return "\n".join(out) + "\n"
+
+
+def give_plugin_list(copy_dir: str, resource: str | None = None) -> None:
+    """Hand the copy your REAPER's plug-in list, keeping what only the copy has scanned."""
+    cache = inventory.cache_file(resource or inventory.REAPER_RESOURCE)
+    if not cache:
+        return
+    dest = os.path.join(copy_dir, os.path.basename(cache))
+    try:
+        with open(cache, encoding="utf-8", errors="replace") as f:
+            yours = f.read()
+        try:
+            with open(dest, encoding="utf-8", errors="replace") as f:
+                copys = f.read()
+        except OSError:
+            copys = ""
+        with open(dest + ".tmp", "w", encoding="utf-8") as f:
+            f.write(merge_plugin_lists(yours, copys))
+        os.replace(dest + ".tmp", dest)
+    except OSError:
+        pass
+
+
 def _finish_copy(copy_dir, src, resource):
     write_ini(copy_dir)
     for name in ("reaper-license.rk",):
         p = os.path.join(resource, name)
         if os.path.exists(p):
             shutil.copy2(p, os.path.join(copy_dir, name))
-    cache = inventory.cache_file(resource)
-    if cache:
-        shutil.copy2(cache, os.path.join(copy_dir, os.path.basename(cache)))
+    give_plugin_list(copy_dir, resource)
     for d in ("Scripts", "presets", "rplmaker/jobs"):
         os.makedirs(os.path.join(copy_dir, d), exist_ok=True)
     with open(os.path.join(copy_dir, "made-from.txt"), "w") as f:
@@ -462,11 +500,16 @@ def _inside(path: str, root: str) -> bool:
     return os.path.realpath(path).startswith(os.path.realpath(root) + os.sep)
 
 
+def _wait_words(seconds: float) -> str:
+    return f"{seconds:.0f} seconds" if seconds < 120 else f"{seconds / 60:.0f} minutes"
+
+
 class Session:
     """One run of the checking copy. Use as a context manager; always ends the copy it started."""
 
-    def __init__(self, copy_dir: str = COPY_DIR, log=None):
+    def __init__(self, copy_dir: str = COPY_DIR, log=None, on_scan=None):
         self.dir = copy_dir
+        self.on_scan = on_scan   # called with the names of plug-ins the copy is about to scan
         self.jobs = os.path.join(copy_dir, "rplmaker", "jobs")
         self.pid = None
         self.n = 0
@@ -527,12 +570,17 @@ class Session:
         with open(os.path.join(self.dir, "Scripts", "__startup.lua"), "w") as f:
             f.write('dofile("%s")\n' % worker.replace("\\", "\\\\").replace('"', '\\"'))
         write_ini(self.dir)   # devices come and go; name one that's here today
-        cache = inventory.cache_file()
-        if cache:   # your REAPER's plug-in list as it is today, so the copy has nothing new to scan
-            try:
-                shutil.copy2(cache, os.path.join(self.dir, os.path.basename(cache)))
-            except OSError:
-                pass
+        give_plugin_list(self.dir)
+        new = inventory.unscanned_files(checker=self.dir)
+        if new:
+            # the copy scans plug-ins your REAPER hasn't yet as it starts; a big instrument can
+            # take a minute or more to answer, and on a Mac may stop to have macOS ask about a
+            # folder, so the wait grows with how many there are
+            timeout = max(timeout, 90 + 120 * len(new))
+            self.log(f"checking REAPER will scan {len(new)} plug-in(s) your REAPER hasn't yet: "
+                     + ", ".join(os.path.basename(n) for n in new))
+            if self.on_scan:
+                self.on_scan([os.path.splitext(os.path.basename(n))[0] for n in new])
         ini = os.path.join(self.dir, "reaper.ini")
         args = ["-cfgfile", ini, "-nosplash", "-newinst", "-ignoreerrors", "-new"]
         if WIN:
@@ -570,7 +618,7 @@ class Session:
             raise CheckerError("The checking copy of REAPER didn't start: it stopped to ask something, in a "
                                f"window saying: {'; '.join(asked)}. It has been closed. Please report this, "
                                "with what it said, so the copy can be set up to answer it.")
-        raise CheckerError("The checking copy of REAPER didn't start within 90 seconds. A window may be "
+        raise CheckerError(f"The checking copy of REAPER didn't start within {_wait_words(timeout)}. A window may be "
                            f"waiting in it (a question from {'Windows' if WIN else 'macOS'} or REAPER); it has "
                            "been closed.")
 
@@ -658,10 +706,10 @@ class Session:
                     on_line(l)
         return [l for l in lines if l and l != "END"]
 
-    def capture(self, fx: str, on_wait=None) -> dict:
+    def capture(self, fx: str, on_wait=None, settle: float = 0) -> dict:
         # long: the first time a plug-in opens a protected folder, macOS stops it there until
         # the person answers whether this copy may (see WAITING_WORDS)
-        lines = self.run("CAPTURE\t" + fx, quiet_limit=240, on_wait=on_wait)
+        lines = self.run("CAPTURE\t" + fx + (f"\t{settle:g}" if settle else ""), quiet_limit=240, on_wait=on_wait)
         if not lines or lines[0] == "ADDFAIL":
             raise CheckerError("addfail")
         d = {}

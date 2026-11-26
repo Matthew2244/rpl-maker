@@ -4,6 +4,7 @@
     python -m rplmaker build NAME [NAME ...] [--out DIR] [--by NAME] [--min 5] [--once] [--folder DIR ...]
     python -m rplmaker organize FOLDER [--out DIR] [--per-category] [--no-prefix] [--layout maker]
     python -m rplmaker checker                # make or remake the checking copy of REAPER
+    python -m rplmaker scan-new               # have the checking copy scan plug-ins your REAPER hasn't yet
 
 NAME matches a plug-in's name, any part, any case ("ozone 12 eq" finds Ozone 12 Equalizer).
 Writes one line per event and the report path at the end; nothing rewrites a line in place.
@@ -55,6 +56,8 @@ def main(argv=None) -> int:
         q.add_argument("--layout", choices=sorted(organize.LAYOUTS), default=cfg["layout"],
                        help=f"plugin: a folder per maker, then per plug-in; maker: per maker only (now: {cfg['layout']})")
     sub.add_parser("checker", help="make or remake the checking copy of REAPER")
+    sub.add_parser("scan-new", help="have the checking copy of REAPER scan plug-ins your REAPER hasn't scanned "
+                   "yet, so their presets can be made into libraries; your REAPER isn't changed")
     sub.add_parser("access", help="Mac: let macOS ask, now, whether the checking copy may open your folders and "
                    "drives. Windows: check every preset folder can be read and libraries can be saved")
     args = ap.parse_args(argv)
@@ -62,6 +65,22 @@ def main(argv=None) -> int:
     if args.cmd == "checker":
         portable.make(progress=print)
         return 0
+    if args.cmd == "scan-new":
+        if portable.status() == "missing":
+            print("REAPER isn't installed on this computer, so there's nothing to scan with.")
+            return 2
+        if portable.status() != "ready":
+            portable.make(progress=print)
+        if not inventory.unscanned_files():
+            print("Every plug-in in your REAPER's plug-in folders has been scanned.")
+            return 0
+        try:
+            done, left = pipeline.scan_new(events=lambda k, names: print(pipeline.scanning_words(names), flush=True))
+        except portable.CheckerError as e:
+            print(str(e))
+            return 3
+        print(pipeline.scan_new_words(done, left))
+        return 0 if not left else 3
     if args.cmd == "access":
         if portable.WIN:   # the Windows counterpart: read every folder, save a test file
             from . import access
@@ -108,6 +127,10 @@ def main(argv=None) -> int:
                   + (f"{p.name} ({p.vendor}): {len(f)} {formats.FORMAT_WORDS.get(fmt, 'no preset files')}" if f else
                      f"{p.name} ({p.vendor}): no preset files found"))
         print(f"{sum(1 for p in plugs if p.count)} of {len(plugs)} plug-ins have preset files this can read.")
+        new = inventory.unscanned_files()
+        if new:
+            print(pipeline.unscanned_words([os.path.splitext(os.path.basename(f))[0] for f in new],
+                                           how="rplmaker scan-new"))
         return 0
     chosen = []
     for want in args.names:
@@ -139,6 +162,8 @@ def main(argv=None) -> int:
                 print(f"  {label}: {k} of {n}", flush=True)
         elif kind == "waiting":
             print("  " + a[1], flush=True)
+        elif kind == "scanning":
+            print("  " + pipeline.scanning_words(a[0]), flush=True)
         elif kind == "result":
             print("  " + a[0].sentence(), flush=True)
     bld = pipeline.Builder(os.path.expanduser(args.out), author=args.by, min_keep=args.min,
