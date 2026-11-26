@@ -291,7 +291,10 @@ other Mac wording that shows there). v0.1.6 2026-11-15 (Settings renamed Prefere
 Say Progress on OSARA's Report selection key; "Already in REAPER"; the Windows copy never asks
 for an audio device and never shows; `release-notes/0.1.6.md`). v0.2.0 2026-11-15 (organizing:
 categories in names, Maker / Plug-in folders, one library per category, Organize Existing
-Libraries; `release-notes/0.2.0.md`).
+Libraries; `release-notes/0.2.0.md`). v0.3.0 2026-11-25 (Scan New Plug-ins, presets applied on a
+timer, IK Multimedia's states; `release-notes/0.3.0.md`). Scan New Plug-ins was run for real from
+the window off-screen: the copy's own entry for ReSing removed, the menu item scanned it, spoke
+both sentences, and looked for presets again with ReSing in the list.
 
 Windows has no code signing certificate, so SmartScreen may warn; the README says what to do.
 Updates are still protected: WinSparkle checks the EdDSA signature first.
@@ -361,7 +364,7 @@ On an Apple silicon Mac with REAPER 7.85, every preset loaded and judged, checke
 | MODO BASS 2 (IK) | NKS, binary ValueTree | 280/280 | every value |
 | MODO DRUM (IK) | NKS, binary ValueTree | 111/117 | every value (6 differ in a few drum settings) |
 | SampleTank 4 (IK) | NKS, ValueTree with XML inside | 40/40 sampled of 19,130 | every value; full run not done (about 2 s a preset) |
-| Pianoverse (IK) | NKS | 0/260 | correctly refused: content not installed yet, it saved no instrument |
+| Pianoverse (IK) | NKS | 184/260 | 183 byte-identical; Black Pearl B200, NY Grand S274 and Royal Upright Y5 (76) come back as another instrument, left out (before its content was installed: 0/260, correctly refused) |
 | ReSing, Philharmonik 2, UVI Workstation | none usable | not offered | encrypted presets; programs only in the plug-in's own browser |
 
 0.1.2 checked on the Mac with the real window off-screen (`tools/drive.py`, bx_glue 88/88 with

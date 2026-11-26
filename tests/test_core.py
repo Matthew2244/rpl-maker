@@ -826,5 +826,6 @@ class IKStates(unittest.TestCase):
         self.assertIn("File, Scan New Plug-ins", words)
         self.assertIn("rplmaker scan-new", pipeline.unscanned_words(["A", "B"], how="rplmaker scan-new"))
         done = pipeline.scan_new_words(["MODO DRUM"], ["Broken"])
-        self.assertIn("Scanned MODO DRUM.", done)
+        self.assertIn("Scanned MODO DRUM. Its presets are offered now; libraries made for it work", done)
+        self.assertIn("scan it;", pipeline.unscanned_words(["MODO DRUM"]))
         self.assertIn("Broken didn't answer the checking copy, so it can't be offered yet", done)

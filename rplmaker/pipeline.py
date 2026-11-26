@@ -187,8 +187,10 @@ def scanning_words(names: list[str]) -> str:
 def scan_new_words(done: list[str], left: list[str]) -> str:
     out = []
     if done:
-        out.append(f"Scanned {', '.join(done)}. Their presets are offered now; libraries made for them work in "
-                   "your REAPER once it has scanned them too (it does that when it next starts).")
+        one = len(done) == 1
+        out.append(f"Scanned {', '.join(done)}. {'Its' if one else 'Their'} presets are offered now; libraries made "
+                   f"for {'it' if one else 'them'} work in your REAPER once it has scanned "
+                   f"{'it' if one else 'them'} too (it does that when it next starts).")
     if left:
         out.append(f"{', '.join(left)} didn't answer the checking copy, so {'it' if len(left) == 1 else 'they'} "
                    "can't be offered yet. A plug-in waiting on its own activation or content does this; "
@@ -200,7 +202,7 @@ def unscanned_words(names: list[str], how: str = "File, Scan New Plug-ins") -> s
     n = len(names)
     return (f"{n} plug-in{'s' if n != 1 else ''} your REAPER hasn't scanned yet, so {'its' if n == 1 else 'their'} "
             f"presets aren't offered: {', '.join(names)}. {how} has the checking copy of REAPER "
-            "scan them; your REAPER isn't changed.")
+            f"scan {'it' if n == 1 else 'them'}; your REAPER isn't changed.")
 
 
 class Builder:
